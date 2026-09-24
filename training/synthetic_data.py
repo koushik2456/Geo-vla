@@ -101,7 +101,7 @@ class SyntheticChangePairs(Dataset):
     def __len__(self):
         return self.n
 
-    def __getitem__(self, i):
+    def _make(self, i):
         rng = np.random.default_rng(self.seed * 1_000_003 + i)
         lon, lat = rng.uniform(70, 90), rng.uniform(8, 30)
         bbox = [lon, lat, lon + 0.03, lat + 0.03]
@@ -115,7 +115,15 @@ class SyntheticChangePairs(Dataset):
             bands = synthetic.synthetic_sentinel2(bbox, d, shape)
             rgb = np.clip(np.stack([bands["B04"], bands["B03"], bands["B02"]], -1) * 2.5, 0, 1)
             imgs.append(rgb.astype(np.float32))
-        a, b = imgs
+        return imgs[0], imgs[1], label, rng
+
+    def raw(self, i):
+        """(before uint8, after uint8, change bool) — for dataset statistics and galleries."""
+        a, b, y, _ = self._make(i)
+        return (a * 255).astype(np.uint8), (b * 255).astype(np.uint8), y.astype(bool)
+
+    def __getitem__(self, i):
+        a, b, label, rng = self._make(i)
         if self.augment and rng.random() < 0.5:
             a, b, label = a[:, ::-1], b[:, ::-1], label[:, ::-1]
         to_t = lambda x: torch.from_numpy(((x - MEAN) / STD).transpose(2, 0, 1).copy())  # noqa: E731

@@ -2,6 +2,8 @@
 import io
 import time
 
+import numpy as np
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -50,6 +52,18 @@ def test_train_promote_and_hot_reload(admin):
     assert job["history"] and "val_f1" in job["history"][0]
     assert job["result"]["test"]["f1"] >= 0
 
+    # Full neural-network analytics are recorded with the job
+    a = job["analytics"]
+    assert a["architecture"]["total_params"] > 1e6 and a["architecture"]["layers"][0]["output_shape"]
+    assert a["dataset"]["task"] == "binary change detection" and a["evaluation"]["threshold_sweep"]
+    assert {"filters.png", "predictions.png", "training_curves.png", "dataset_samples.png"} <= set(a["images"])
+    assert job["hyperparameters"]["loss"].startswith("weighted BCE")
+    assert job["batches"] and "grad_norm" in job["batches"][0]
+    png = client.get(f"/training/jobs/{job['id']}/artifacts/filters.png", headers=admin)
+    assert png.status_code == 200 and png.content[:4] == b"\x89PNG"
+    assert client.get(f"/training/jobs/{job['id']}/artifacts/..%2F..%2Fconfig.py", headers=admin).status_code == 404
+    assert client.get("/models/change_detector/versions/v1/artifacts/evaluation.json", headers=admin).status_code == 200
+
     registry = client.get("/models", headers=admin).json()["change_detector"]
     assert registry["versions"][0]["version"] == "v1" and registry["versions"][0]["metrics"]["test_f1"] is not None
 
@@ -84,3 +98,25 @@ def test_upload_checkpoint(admin):
     assert wrong.status_code == 400 and "architecture" in wrong.json()["detail"]
     notpth = client.post("/models/classifier/upload", headers=admin, files={"file": ("x.txt", b"hi", "text/plain")})
     assert notpth.status_code == 400
+
+
+def test_dataset_explorer(admin):
+    stats = client.get("/training/datasets/synthetic/explore", headers=admin).json()
+    assert stats["total"] == 2000 and len(stats["per_class"]) == 10
+    assert sum(stats["class_counts"]["train"].values()) == stats["split_sizes"]["train"]
+    assert len(stats["histograms"]["R"]) == 32 and len(stats["channel_mean"]) == 3
+    assert client.get("/training/datasets/synthetic/samples.png", headers=admin).status_code == 200
+    change = client.get("/training/datasets/synthetic_change/explore", headers=admin).json()
+    assert 0 < change["class_balance"]["changed"] < 1
+    assert client.get("/training/datasets/eurosat/explore", headers=admin).status_code in (200, 409)
+    assert client.get("/training/datasets/levir/explore", headers=admin).status_code == 409
+    assert client.post("/training/datasets/levir/download", headers=admin).status_code == 400
+
+
+def test_stratified_split_keeps_every_class():
+    from training.datasets import stratified_split
+    labels = np.repeat(np.arange(10), 50)
+    tr, va, te = stratified_split(labels, max_samples=200)
+    for part in (tr, va, te):
+        assert set(labels[part]) == set(range(10))
+    assert not (set(tr) & set(va)) and not (set(va) & set(te))

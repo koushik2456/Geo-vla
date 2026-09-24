@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
 
 from geo_utils import validate_bbox
-from services import auth, db, exports, runs, storage, tiles
+from services import auth, db, exports, runs, storage, terrain, tiles
 
 router = APIRouter(tags=["analyses"])
 
@@ -153,12 +153,35 @@ def tile(run_id: str, layer_id: str, z: int, x: int, y: int, share: str | None =
 
 
 @router.get("/runs/{run_id}/layers/{layer_id}/preview.png")
-def preview(run_id: str, layer_id: str, share: str | None = None, user=Depends(auth.optional_user)):
+def preview(run_id: str, layer_id: str, share: str | None = None, size: int = Query(512, ge=64, le=2048),
+            user=Depends(auth.optional_user)):
     run = _load(run_id, user, share)
     layer = _layer(run, layer_id)
     if layer["kind"] == "vector":
         raise HTTPException(status_code=400, detail="vector layers have no preview")
-    return Response(exports.preview_png(run, layer), media_type="image/png", headers=_TILE_HEADERS)
+    return Response(exports.preview_png(run, layer, size), media_type="image/png", headers=_TILE_HEADERS)
+
+
+# -- 3D terrain -------------------------------------------------------------------------------------
+
+@router.get("/runs/{run_id}/terrain")
+async def terrain_model(run_id: str, share: str | None = None, user=Depends(auth.optional_user)):
+    from fastapi.concurrency import run_in_threadpool
+    run = _load(run_id, user, share)
+    if run["status"] != "done":
+        raise HTTPException(status_code=409, detail="the analysis has not finished")
+    return await run_in_threadpool(terrain.terrain_model, run)
+
+
+@router.get("/runs/{run_id}/terrain/{kind}.png")
+async def terrain_texture(run_id: str, kind: str, share: str | None = None, user=Depends(auth.optional_user)):
+    from fastapi.concurrency import run_in_threadpool
+    run = _load(run_id, user, share)
+    try:
+        png = await run_in_threadpool(terrain.texture_png, run, kind)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown texture")
+    return Response(png, media_type="image/png", headers=_TILE_HEADERS)
 
 
 @router.get("/runs/{run_id}/layers/{layer_id}.geojson")

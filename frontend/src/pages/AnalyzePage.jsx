@@ -13,10 +13,12 @@ import WorkflowPanel from "../components/WorkflowPanel.jsx";
 
 // Cesium is large — only load it when the globe view is opened.
 const GlobeView = lazy(() => import("../components/GlobeView.jsx"));
+const TerrainView = lazy(() => import("../components/TerrainView.jsx"));
 
 const VIEWS = [
   ["2d", "2D map"],
-  ["terrain", "3D terrain"],
+  ["studio3d", "3D Studio"],
+  ["terrain", "3D tiles"],
   ["globe", "Globe"],
   ["compare", "Compare"],
 ];
@@ -146,7 +148,7 @@ export default function AnalyzePage({ runId, shareToken, aoi, setAoi, place, set
         <div className="view-toggle" role="tablist" aria-label="Map view">
           {VIEWS.map(([id, label]) => (
             <button key={id} role="tab" aria-selected={view === id} className={view === id ? "active" : ""} onClick={() => setView(id)}
-              disabled={id === "compare" && layers.filter((l) => l.tiles).length < 2}>
+              disabled={(id === "compare" && layers.filter((l) => l.tiles).length < 2) || (id === "studio3d" && run?.status !== "done")}>
               {label}
             </button>
           ))}
@@ -157,7 +159,11 @@ export default function AnalyzePage({ runId, shareToken, aoi, setAoi, place, set
           </div>
         )}
 
-        {view === "globe" ? (
+        {view === "studio3d" && run?.status === "done" ? (
+          <Suspense fallback={<div className="map-loading">Loading 3D studio…</div>}>
+            <TerrainView key={run.id} run={run} share={shareToken} />
+          </Suspense>
+        ) : view === "globe" ? (
           <Suspense fallback={<div className="map-loading">Loading 3D globe…</div>}>
             <GlobeView {...mapProps} />
           </Suspense>
@@ -167,8 +173,8 @@ export default function AnalyzePage({ runId, shareToken, aoi, setAoi, place, set
           <MapView {...mapProps} terrain={view === "terrain"} fitKey={fitKey} readOnly={readOnly || !!run} />
         )}
 
-        {layers.length > 0 && view !== "compare" && <LayerPanel layers={layers} layerState={layerState} onChange={setLayerState} />}
-        {Object.keys(groups).length > 0 && view !== "compare" && <TimelapsePlayer groups={groups} onShow={showFrame} />}
+        {layers.length > 0 && view !== "compare" && view !== "studio3d" && <LayerPanel layers={layers} layerState={layerState} onChange={setLayerState} />}
+        {Object.keys(groups).length > 0 && view !== "compare" && view !== "studio3d" && <TimelapsePlayer groups={groups} onShow={showFrame} />}
         {running && <div className="map-busy"><span className="spinner" aria-hidden="true" /> Running analysis…</div>}
       </main>
     </div>

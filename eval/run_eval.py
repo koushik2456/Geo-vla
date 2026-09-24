@@ -5,7 +5,7 @@ For each benchmark instruction the agent runs end to end; we compare the set
 of tools it called against the tools a correct plan requires.
 
     python eval/run_eval.py                    # offline planner (baseline)
-    python eval/run_eval.py --planner claude   # needs ANTHROPIC_API_KEY
+    python eval/run_eval.py --planner llm      # needs an LLM key (GROQ_API_KEY, …)
 
 Metrics per task and overall:
   tool_recall     required tools that were called / required tools
@@ -27,7 +27,7 @@ DEFAULT_BBOX = [77.50, 12.90, 77.56, 12.96]
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--planner", choices=["offline", "claude"], default="offline")
+    p.add_argument("--planner", choices=["offline", "llm"], default="offline")
     p.add_argument("--benchmark", default=os.path.join(ROOT, "eval", "benchmark.jsonl"))
     p.add_argument("--bbox", type=float, nargs=4, default=DEFAULT_BBOX)
     p.add_argument("--out", default=None, help="Write per-task results as JSON")
@@ -36,14 +36,14 @@ def main():
     from agent import GeoVLAAgent
     import config
 
-    if args.planner == "claude" and not config.llm_enabled():
-        raise SystemExit("ANTHROPIC_API_KEY is not set")
+    if args.planner == "llm" and not config.llm_enabled():
+        raise SystemExit("no LLM configured — set GROQ_API_KEY (or another provider, see .env.example)")
 
     tasks = [json.loads(line) for line in open(args.benchmark) if line.strip()]
     rows = []
     for task in tasks:
         start = time.perf_counter()
-        agent = GeoVLAAgent(bbox=args.bbox, use_llm=args.planner == "claude")
+        agent = GeoVLAAgent(bbox=args.bbox, use_llm=args.planner == "llm")
         try:
             result = agent.run(task["instruction"])
             answer, trace = result["answer"], result["trace"]

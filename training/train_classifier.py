@@ -1,16 +1,18 @@
 """
-training/train_classifier.py — Fine-tune ResNet-50 on EuroSAT (RGB, 10 classes).
+training/train_classifier.py — Fine-tune ResNet-50 on EuroSAT (RGB, 10 land-cover classes).
 
-Usage (from the repo root):
-    python -m training.train_classifier --epochs 10 --batch-size 64
+    python -m training.train_classifier                               # full EuroSAT, 10 epochs (GPU)
+    python -m training.train_classifier --max-samples 2000 --img-size 64 --epochs 5   # quick, CPU-friendly
+    python -m training.train_classifier --dataset synthetic --epochs 3                # no download
 
-Data: torchvision downloads EuroSAT RGB into data/eurosat/ automatically. If
-that mirror is down, download EuroSAT_RGB.zip manually and pass
---image-folder path/to/2750 (one sub-folder per class).
+EuroSAT (~90 MB) downloads automatically on first use (training/datasets.py).
 
-Outputs:
-    models/checkpoints/resnet50_eurosat.pth   (best val accuracy, state_dict)
-    models/checkpoints/resnet50_eurosat.metrics.json
+Outputs (next to --out):
+    resnet50_eurosat.pth            best-validation weights (state_dict)
+    resnet50_eurosat.metrics.json   headline metrics + per-epoch history
+    analytics/                      dataset statistics, architecture, confusion matrix,
+                                    per-class metrics, filters, feature maps, embeddings,
+                                    prediction gallery, training curves (see training/analytics.py)
 """
 import argparse
 import json
@@ -21,21 +23,58 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset
-from torchvision import datasets, transforms
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import EUROSAT_CLASSES  # noqa: E402
 from models.classifier import SceneClassifier  # noqa: E402
-from training.common import Progress, build_with_pretrained_fallback  # noqa: E402
+from training import analytics  # noqa: E402
+from training.common import Progress, build_with_pretrained_fallback, read_batches  # noqa: E402
+from training.datasets import describe_classification, download_eurosat, stratified_split  # noqa: E402
 
 MEAN, STD = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
 
 
-def build_datasets(args):
-    train_tf = transforms.Compose([
-        transforms.Resize((224, 224)),
+class ImageList(Dataset):
+    """Images addressed by index through a loader function, with a torchvision transform."""
+
+    def __init__(self, load, labels, indices, transform):
+        self.load, self.labels, self.indices, self.transform = load, labels, indices, transform
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, k):
+        i = self.indices[k]
+        return self.transform(Image.fromarray(self.load(i))), int(self.labels[i])
+
+
+def load_source(args, progress):
+    """Returns (load(i) -> HxWx3 uint8, labels array, source description)."""
+    if args.dataset == "synthetic":
+        from training.synthetic_data import SyntheticEuroSAT
+        ds = SyntheticEuroSAT(per_class=args.samples_per_class, seed=args.seed)
+        labels = np.array([i // ds.per_class for i in range(len(ds))])
+        return (lambda i: np.array(ds[i][0])), labels, "synthetic EuroSAT-like patches"
+    root = args.image_folder or download_eurosat(log=lambda m: progress.emit("info", message=m))
+    files, labels = [], []
+    for c, name in enumerate(EUROSAT_CLASSES):
+        folder = os.path.join(root, name)
+        if not os.path.isdir(folder):
+            raise SystemExit(f"missing class folder {folder}")
+        for f in sorted(os.listdir(folder)):
+            if f.lower().endswith((".jpg", ".jpeg", ".png", ".tif")):
+                files.append(os.path.join(folder, f))
+                labels.append(c)
+    return (lambda i: np.array(Image.open(files[i]).convert("RGB"))), np.array(labels), f"EuroSAT RGB ({root})"
+
+
+def transforms_for(size: int):
+    train = transforms.Compose([
+        transforms.Resize((size, size)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
         transforms.RandomApply([transforms.RandomRotation((90, 90))], p=0.5),
@@ -43,53 +82,59 @@ def build_datasets(args):
         transforms.ToTensor(),
         transforms.Normalize(MEAN, STD),
     ])
-    eval_tf = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(MEAN, STD)])
-
-    def make(tf):
-        if args.dataset == "synthetic":
-            from training.synthetic_data import SyntheticEuroSAT
-            return SyntheticEuroSAT(per_class=args.samples_per_class, transform=tf, seed=args.seed)
-        if args.image_folder:
-            return datasets.ImageFolder(args.image_folder, transform=tf)
-        return datasets.EuroSAT(args.data_dir, transform=tf, download=True)
-
-    full_train, full_eval = make(train_tf), make(eval_tf)
-    classes = full_train.classes
-    if classes != EUROSAT_CLASSES:
-        raise SystemExit(f"class order mismatch: {classes} != {EUROSAT_CLASSES}")
-
-    # Stratification-free 80/10/10 split with a fixed seed (reproducible).
-    idx = np.random.default_rng(args.seed).permutation(len(full_train))
-    n_val = n_test = len(idx) // 10
-    test_idx, val_idx, train_idx = idx[:n_test], idx[n_test:n_test + n_val], idx[n_test + n_val:]
-    return Subset(full_train, train_idx), Subset(full_eval, val_idx), Subset(full_eval, test_idx)
+    evaluate = transforms.Compose([transforms.Resize((size, size)), transforms.ToTensor(), transforms.Normalize(MEAN, STD)])
+    return train, evaluate
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, criterion=None, collect=False):
     model.eval()
-    preds, labels = [], []
+    preds, labels, probs, feats, total_loss = [], [], [], [], 0.0
+    captured = {}
+    hook = model.model.avgpool.register_forward_hook(lambda m, i, o: captured.__setitem__("f", o.flatten(1))) if collect else None
     for x, y in loader:
-        preds.append(model(x.to(device)).argmax(1).cpu())
-        labels.append(y)
-    preds, labels = torch.cat(preds).numpy(), torch.cat(labels).numpy()
-    per_class = {c: float((preds[labels == i] == i).mean()) for i, c in enumerate(EUROSAT_CLASSES) if (labels == i).any()}
-    return float((preds == labels).mean()), per_class
+        x, y = x.to(device), y.to(device)
+        logits = model(x)
+        if criterion is not None:
+            total_loss += criterion(logits, y).item() * len(y)
+        p = logits.softmax(1)
+        preds.append(p.argmax(1).cpu())
+        probs.append(p.max(1).values.cpu())
+        labels.append(y.cpu())
+        if collect:
+            feats.append(captured["f"].cpu())
+    if hook:
+        hook.remove()
+    out = {"pred": torch.cat(preds).numpy(), "true": torch.cat(labels).numpy(), "conf": torch.cat(probs).numpy()}
+    out["acc"] = float((out["pred"] == out["true"]).mean())
+    out["loss"] = total_loss / max(len(out["true"]), 1)
+    if collect:
+        out["features"] = torch.cat(feats).numpy()
+    return out
+
+
+def grad_norm(model) -> float:
+    total = 0.0
+    for p in model.parameters():
+        if p.grad is not None:
+            total += float(p.grad.detach().pow(2).sum())
+    return total ** 0.5
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--data-dir", default="data/eurosat")
-    p.add_argument("--image-folder", default=None, help="Use an extracted EuroSAT RGB folder instead of downloading")
+    p.add_argument("--dataset", choices=["eurosat", "synthetic"], default="eurosat")
+    p.add_argument("--image-folder", default=None, help="Use an extracted EuroSAT RGB folder")
     p.add_argument("--out", default="models/checkpoints/resnet50_eurosat.pth")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--img-size", type=int, default=224, help="224 = ImageNet size; 64 = EuroSAT native (fast on CPU)")
+    p.add_argument("--max-samples", type=int, default=0, help="Stratified subsample of the dataset (0 = all)")
+    p.add_argument("--samples-per-class", type=int, default=300, help="Synthetic dataset size")
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--no-pretrained", action="store_true", help="Skip ImageNet init (smoke tests only)")
-    p.add_argument("--dataset", choices=["eurosat", "synthetic"], default="eurosat")
-    p.add_argument("--samples-per-class", type=int, default=300, help="synthetic dataset size")
+    p.add_argument("--no-pretrained", action="store_true", help="Random initialisation instead of ImageNet")
     p.add_argument("--progress-file", default=None, help="JSON-lines progress for the training studio")
     args = p.parse_args()
     progress = Progress(args.progress_file)
@@ -102,56 +147,122 @@ def main():
 
 def run(args, progress):
     torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_ds, val_ds, test_ds = build_datasets(args)
-    print(f"train={len(train_ds)} val={len(val_ds)} test={len(test_ds)} device={device}")
-    loader = lambda ds, shuffle: DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle,  # noqa: E731
-                                            num_workers=args.workers, pin_memory=device.type == "cuda")
-    train_dl, val_dl, test_dl = loader(train_ds, True), loader(val_ds, False), loader(test_ds, False)
+    an_dir = os.path.join(os.path.dirname(os.path.abspath(args.out)), "analytics")
+    os.makedirs(an_dir, exist_ok=True)
 
+    # 1. Data
+    load, labels, source = load_source(args, progress)
+    train_idx, val_idx, test_idx = stratified_split(labels, max_samples=args.max_samples or None, seed=args.seed)
+    progress.emit("info", message=f"Dataset: {source}; {len(train_idx)} train / {len(val_idx)} val / {len(test_idx)} test")
+    stats = describe_classification(load, labels, {"train": train_idx, "val": val_idx, "test": test_idx}, source, an_dir)
+    analytics.write_json(an_dir, "dataset.json", stats)
+    progress.emit("dataset", **{k: stats[k] for k in ("total", "split_sizes", "channel_mean", "channel_std")})
+
+    train_tf, eval_tf = transforms_for(args.img_size)
+    mk = lambda idx, tf, shuffle: DataLoader(ImageList(load, labels, idx, tf), batch_size=args.batch_size,  # noqa: E731
+                                             shuffle=shuffle, num_workers=args.workers, pin_memory=device.type == "cuda")
+    train_dl, val_dl, test_dl = mk(train_idx, train_tf, True), mk(val_idx, eval_tf, False), mk(test_idx, eval_tf, False)
+
+    # 2. Model
     model, pretrained = build_with_pretrained_fallback(
         lambda pre: SceneClassifier(num_classes=len(EUROSAT_CLASSES), pretrained=pre), not args.no_pretrained, progress)
     model = model.to(device)
-    progress.emit("start", model="classifier", dataset=args.dataset, epochs=args.epochs,
-                  steps_per_epoch=len(train_dl), train_size=len(train_ds), val_size=len(val_ds),
-                  test_size=len(test_ds), device=str(device), pretrained=pretrained)
+    net = model.model
+    arch = analytics.architecture_summary(
+        model, (torch.zeros(1, 3, args.img_size, args.img_size, device=device),),
+        [(n, getattr(net, n)) for n in ("conv1", "bn1", "relu", "maxpool", "layer1", "layer2", "layer3", "layer4", "avgpool", "fc")],
+        "ResNet-50 scene classifier")
+    arch["notes"] = {"stem": "7×7 conv, stride 2 → batch norm → ReLU → 3×3 max-pool",
+                     "stages": "4 stages of bottleneck blocks (1×1 → 3×3 → 1×1 conv + skip connection): 3, 4, 6, 3 blocks",
+                     "head": f"global average pooling → fully connected 2048 → {len(EUROSAT_CLASSES)} classes (softmax)",
+                     "initialisation": "ImageNet" if pretrained else "random"}
+    analytics.write_json(an_dir, "architecture.json", arch)
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, total_steps=args.epochs * len(train_dl))
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
+    hyper = {"optimizer": "AdamW", "weight_decay": 1e-4, "max_lr": args.lr, "schedule": "one-cycle (cosine)",
+             "loss": "cross-entropy, label smoothing 0.05", "batch_size": args.batch_size, "epochs": args.epochs,
+             "img_size": args.img_size, "augmentation": "flips, 90° rotation, colour jitter",
+             "mixed_precision": device.type == "cuda"}
+    progress.emit("start", model="classifier", dataset=args.dataset, epochs=args.epochs, steps_per_epoch=len(train_dl),
+                  train_size=len(train_idx), val_size=len(val_idx), test_size=len(test_idx), device=str(device),
+                  pretrained=pretrained, params=arch["total_params"], hyperparameters=hyper)
 
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    best_acc, history = -1.0, []
+    # 3. Train
+    best_acc, history, step = -1.0, [], 0
     for epoch in range(1, args.epochs + 1):
         model.train()
-        start, total_loss = time.time(), 0.0
-        for step, (x, y) in enumerate(tqdm(train_dl, desc=f"epoch {epoch}/{args.epochs}"), 1):
+        start, total_loss, correct, seen = time.time(), 0.0, 0, 0
+        for i, (x, y) in enumerate(tqdm(train_dl, desc=f"epoch {epoch}/{args.epochs}"), 1):
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, enabled=device.type == "cuda"):
-                loss = criterion(model(x), y)
+                logits = model(x)
+                loss = criterion(logits, y)
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            gnorm = grad_norm(model)
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
-            total_loss += loss.item() * len(x)
-            progress.batch(epoch=epoch, step=step, loss=loss.item())
-        val_acc, _ = evaluate(model, val_dl, device)
-        history.append({"epoch": epoch, "train_loss": total_loss / len(train_ds), "val_acc": val_acc,
+            step += 1
+            hits = int((logits.argmax(1) == y).sum())
+            total_loss += loss.item() * len(y)
+            correct += hits
+            seen += len(y)
+            progress.batch(epoch=epoch, step=i, global_step=step, loss=loss.item(), batch_acc=hits / len(y),
+                           lr=scheduler.get_last_lr()[0], grad_norm=gnorm)
+        val = evaluate(model, val_dl, device, criterion)
+        history.append({"epoch": epoch, "train_loss": total_loss / seen, "train_acc": correct / seen,
+                        "val_loss": val["loss"], "val_acc": val["acc"], "lr": scheduler.get_last_lr()[0],
                         "seconds": round(time.time() - start, 1)})
         progress.emit("epoch", **history[-1])
-        if val_acc > best_acc:
-            best_acc = val_acc
+        if val["acc"] > best_acc:
+            best_acc = val["acc"]
             torch.save(model.state_dict(), args.out)
 
+    # 4. Evaluate the best checkpoint and explain it
+    progress.emit("info", message="Evaluating the best checkpoint on the test set and generating analytics")
     model.load_state_dict(torch.load(args.out, map_location=device))
-    test_acc, per_class = evaluate(model, test_dl, device)
-    metrics = {"dataset": "EuroSAT RGB" if args.dataset == "eurosat" else "synthetic EuroSAT-like",
-               "best_val_acc": best_acc, "test_acc": test_acc, "per_class_test_acc": per_class,
-               "pretrained": pretrained, "history": history, "args": vars(args)}
+    test = evaluate(model, test_dl, device, criterion, collect=True)
+    report = analytics.classification_report(test["true"], test["pred"], EUROSAT_CLASSES)
+    report["embedding"] = analytics.pca_2d(test["features"], test["true"])
+    report["test_loss"] = test["loss"]
+    analytics.write_json(an_dir, "evaluation.json", report)
+    analytics.confusion_png(report, os.path.join(an_dir, "confusion_matrix.png"))
+    analytics.filters_png(net.conv1.weight, os.path.join(an_dir, "filters.png"),
+                          "The 64 learned 7×7 kernels of the first convolution")
+
+    sample = load(test_idx[0])
+    captured = {}
+    h = net.layer1.register_forward_hook(lambda m, i, o: captured.__setitem__("a", o[0]))
+    model.eval()
+    with torch.no_grad():
+        model(eval_tf(Image.fromarray(sample)).unsqueeze(0).to(device))
+    h.remove()
+    analytics.feature_maps_png(sample, captured["a"], os.path.join(an_dir, "feature_maps.png"), "layer1")
+
+    wrong = np.flatnonzero(test["pred"] != test["true"])[:8]
+    right = np.flatnonzero(test["pred"] == test["true"])
+    order = np.concatenate([wrong, right])[:16]
+    analytics.predictions_png([load(test_idx[k]) for k in order], test["true"][order], test["pred"][order],
+                              test["conf"][order], EUROSAT_CLASSES, os.path.join(an_dir, "predictions.png"))
+    analytics.curves_png(history, read_batches(args.progress_file), os.path.join(an_dir, "training_curves.png"),
+                         "val_acc", "validation accuracy")
+
+    metrics = {"dataset": source if args.dataset == "eurosat" else "synthetic EuroSAT-like",
+               "best_val_acc": best_acc, "test_acc": report["accuracy"], "macro_f1": report["macro_f1"],
+               "per_class_test_acc": {c: v["recall"] for c, v in report["per_class"].items()},
+               "pretrained": pretrained, "params": arch["total_params"], "hyperparameters": hyper,
+               "history": history, "args": vars(args)}
     with open(args.out.replace(".pth", ".metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
-    progress.emit("done", checkpoint=args.out, test_acc=test_acc, best_val_acc=best_acc, per_class=per_class)
+    progress.emit("done", checkpoint=args.out, test_acc=report["accuracy"], macro_f1=report["macro_f1"],
+                  best_val_acc=best_acc, per_class=metrics["per_class_test_acc"])
 
 
 if __name__ == "__main__":

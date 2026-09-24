@@ -208,7 +208,7 @@ def report_pdf(run: dict, layer_ids: list = None, author=None) -> bytes:
         ["Request", _esc(run["instruction"])],
         ["Analysis date", (run.get("finished_at") or run["created_at"])[:19].replace("T", " ") + " UTC"],
         ["Method", "Fixed sector workflow" if run["planner"] == "workflow" else
-         (f"AI planner ({run['model']})" if run["planner"] == "claude" else "Rule-based planner")],
+         (f"AI planner ({run['model']})" if run["planner"] in ("llm", "claude") else "Rule-based planner")],
     ]
     if author:
         meta_rows.append(["Prepared for", _esc(" · ".join(x for x in (author.get("full_name") or author["username"],

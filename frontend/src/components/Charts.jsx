@@ -26,13 +26,13 @@ function roundedTopBar(x, y, w, h, r) {
   return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
 }
 
-function Legend({ series }) {
+function Legend({ series, colors = SERIES }) {
   if (series.length < 2) return null;
   return (
     <div className="chart-legend">
       {series.map((s, i) => (
         <span key={s.name}>
-          <i style={{ background: SERIES[i] }} /> {s.name}
+          <i style={{ background: colors[i] }} /> {s.name}
         </span>
       ))}
     </div>
@@ -54,6 +54,7 @@ function Tooltip({ x, y, title, rows, unit }) {
 }
 
 function BarChart({ chart }) {
+  const SERIES_C = chart.colors || SERIES;
   const [hover, setHover] = useState(null);
   const series = chart.series.slice(0, 3);
   const cats = chart.categories;
@@ -85,7 +86,7 @@ function BarChart({ chart }) {
               <rect x={PAD.left + ci * band} y={PAD.top} width={band} height={plotH} fill="transparent" />
               {series.map((s, si) => (
                 <path key={s.name} d={roundedTopBar(x0 + si * (barW + 2), y(s.values[ci]), barW, y(0) - y(s.values[ci]), 4)}
-                  fill={SERIES[si]} opacity={hover === null || hover === ci ? 1 : 0.45} />
+                  fill={SERIES_C[si]} opacity={hover === null || hover === ci ? 1 : 0.45} />
               ))}
               <text x={PAD.left + ci * band + band / 2} y={H - PAD.bottom + 14} className="axis" textAnchor={cats.length > 4 ? "end" : "middle"}
                 transform={cats.length > 4 ? `rotate(-30 ${PAD.left + ci * band + band / 2} ${H - PAD.bottom + 14})` : undefined}>
@@ -101,13 +102,14 @@ function BarChart({ chart }) {
       </svg>
       {hover !== null && (
         <Tooltip x={PAD.left + hover * band + band / 2} y={PAD.top + plotH / 3} title={cats[hover]} unit={chart.unit}
-          rows={series.map((s, i) => ({ name: s.name, value: s.values[hover], color: SERIES[i] }))} />
+          rows={series.map((s, i) => ({ name: s.name, value: s.values[hover], color: SERIES_C[i] }))} />
       )}
     </div>
   );
 }
 
 function LineChart({ chart }) {
+  const SERIES_C = chart.colors || SERIES;
   const [hover, setHover] = useState(null);
   const series = chart.series.slice(0, 3);
   const xs = chart.x;
@@ -151,10 +153,10 @@ function LineChart({ chart }) {
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={PAD.top + plotH} className="crosshair" />}
         {series.map((s, si) => (
           <g key={s.name}>
-            <polyline fill="none" stroke={SERIES[si]} strokeWidth="2" strokeLinejoin="round"
+            <polyline fill="none" stroke={SERIES_C[si]} strokeWidth="2" strokeLinejoin="round"
               points={s.values.map((v, i) => `${x(i)},${y(v)}`).join(" ")} />
-            {s.values.map((v, i) => (
-              <circle key={i} cx={x(i)} cy={y(v)} r={hover === i ? 5 : 4} fill={SERIES[si]} stroke="var(--panel)" strokeWidth="2" />
+            {s.values.map((v, i) => (xs.length <= 24 || hover === i) && (
+              <circle key={i} cx={x(i)} cy={y(v)} r={hover === i ? 5 : 4} fill={SERIES_C[si]} stroke="var(--panel-solid)" strokeWidth="2" />
             ))}
           </g>
         ))}
@@ -164,7 +166,7 @@ function LineChart({ chart }) {
       </svg>
       {hover !== null && (
         <Tooltip x={x(hover)} y={PAD.top + plotH / 3} title={xs[hover]} unit={chart.unit}
-          rows={series.map((s, i) => ({ name: s.name, value: s.values[hover], color: SERIES[i] }))} />
+          rows={series.map((s, i) => ({ name: s.name, value: s.values[hover], color: SERIES_C[i] }))} />
       )}
     </div>
   );
@@ -210,7 +212,7 @@ export function Chart({ chart }) {
           </button>
         )}
       </figcaption>
-      {plottable && <Legend series={chart.series.slice(0, 3)} />}
+      {plottable && <Legend series={chart.series.slice(0, 3)} colors={chart.colors} />}
       {table || !plottable ? <DataTable {...data} /> : chart.type === "bar" ? <BarChart chart={chart} /> : <LineChart chart={chart} />}
     </figure>
   );

@@ -179,7 +179,7 @@ export default function ResultPanel({ run, share, onChanged }) {
                 ))}
               </div>
               <p className="meta">
-                {run.planner === "workflow" ? "Fixed workflow" : run.planner === "claude" ? run.model : "Offline planner"} · {steps} steps · data {run.data_mode}
+                {run.planner === "workflow" ? "Fixed workflow" : run.planner === "llm" || run.planner === "claude" ? run.model : "Offline planner"} · {steps} steps · data {run.data_mode}
               </p>
               <SaveShare run={run} onChanged={onChanged} />
             </>

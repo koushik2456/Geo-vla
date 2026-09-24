@@ -76,7 +76,25 @@ class _World:
         z += 150 * d                                   # valley floor rises away from the river
         z -= 60 * np.exp(-((d / 0.05) ** 2))           # incised channel
         z += 3 * np.sin(40 * u) * np.cos(37 * v)       # micro-relief
+        # Ridged fractal relief (fBm): sharp ridges and gullies, stronger on high ground.
+        relief = self._ridged_noise(shape)
+        hill = np.clip((z - z.min()) / max(float(z.max() - z.min()), 1e-6), 0, 1)
+        z += relief * (25 + 140 * hill) * (1 - np.exp(-((d / 0.03) ** 2)))
         return z.astype(np.float32)
+
+    def _ridged_noise(self, shape):
+        """Resolution-independent ridged multi-octave noise in [0, 1] (seeded by the bbox)."""
+        import cv2
+        rng = np.random.default_rng(_seed(self.bbox) + 7)
+        total = np.zeros(shape, np.float32)
+        amp, norm = 1.0, 0.0
+        for size in (4, 8, 16, 32, 64, 128):
+            base = rng.standard_normal((size + 1, size + 1)).astype(np.float32)
+            layer = cv2.resize(base, (shape[1], shape[0]), interpolation=cv2.INTER_CUBIC)
+            total += amp * (1 - np.abs(np.tanh(layer)))
+            norm += amp
+            amp *= 0.5
+        return total / norm
 
     def land_cover(self, shape, year: float):
         """Integer cover map: 0 water, 1 forest, 2 crop, 3 bare, 4 urban."""

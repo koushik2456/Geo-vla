@@ -20,7 +20,7 @@ export default function AskPanel({ busy, onRun, planner }) {
         onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && submit(e)}
         placeholder="Describe what you want to know about the selected area…" />
       <small className="muted">
-        {planner === "claude" ? "The AI agent plans the analysis and explains each step." : "Offline mode: a rule-based planner handles common questions. Add an Anthropic API key for the AI agent."}
+        {planner === "llm" ? "The AI agent plans the analysis and explains each step." : "Offline mode: a rule-based planner handles common questions. Add a GROQ_API_KEY (free) for the AI agent."}
       </small>
       <button type="submit" className="primary" disabled={busy || !text.trim()}>
         {busy ? "Running…" : "Run agent"}

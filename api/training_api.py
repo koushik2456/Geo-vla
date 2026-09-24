@@ -116,3 +116,54 @@ async def upload(model: str, file: UploadFile = File(...), notes: str = Form("")
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"checkpoint does not match the {model} architecture: {exc}")
     return {"version": row["version"]}
+
+
+# -- datasets, analytics artifacts ---------------------------------------------------------------
+
+@router.post("/training/datasets/{dataset_id}/download", status_code=202)
+def download_dataset(dataset_id: str, _=Depends(admin)):
+    try:
+        return training.start_download(dataset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/training/datasets/{dataset_id}/explore")
+async def explore_dataset(dataset_id: str, refresh: bool = False, _=Depends(admin)):
+    from fastapi.concurrency import run_in_threadpool
+    try:
+        return await run_in_threadpool(training.explore_dataset, dataset_id, refresh)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown dataset")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _png(path: str):
+    from fastapi.responses import FileResponse
+    return FileResponse(path, media_type="image/png" if path.endswith(".png") else "application/json",
+                        headers={"Cache-Control": "private, max-age=60"})
+
+
+@router.get("/training/datasets/{dataset_id}/samples.png")
+def dataset_samples(dataset_id: str, _=Depends(admin)):
+    path = os.path.join(training.explore_dir(dataset_id), "dataset_samples.png")
+    if dataset_id not in ("synthetic", "eurosat", "synthetic_change", "levir") or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="explore the dataset first")
+    return _png(path)
+
+
+@router.get("/training/jobs/{job_id}/artifacts/{name}")
+def job_artifact(job_id: int, name: str, _=Depends(admin)):
+    try:
+        return _png(training.artifact_path(job_id, name))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="artifact not found")
+
+
+@router.get("/models/{model}/versions/{version}/artifacts/{name}")
+def version_artifact(model: str, version: str, name: str, _=Depends(admin)):
+    try:
+        return _png(training.version_artifact_path(model, version, name))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="artifact not found")

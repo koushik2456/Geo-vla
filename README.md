@@ -24,24 +24,53 @@ Team: R. Yashaswini (RA2311026010090) · T. Vinay Koushik (RA2311026010091)
 ## Quick start
 
 Everything runs with **no keys, no data downloads and no trained models**. Each missing
-piece has a clearly labelled fallback: a rule-based planner instead of Claude, a
+piece has a clearly labelled fallback: a rule-based planner instead of an LLM, a
 synthetic demo world instead of satellite data, and classical algorithms instead of
 untrained networks.
 
-```bash
-# Backend (Python 3.11+)
-python -m venv .venv && source .venv/bin/activate
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu   # optional: smaller CPU build
-pip install -r requirements.txt
-ADMIN_PASSWORD=choose-a-password uvicorn main:app --port 8000
+**One-command setup** (Python 3.11+, Node 18+). It creates `.venv`, installs PyTorch (the
+CPU build when there is no NVIDIA GPU), builds the frontend, copies `.env.example` to
+`.env` and downloads EuroSAT:
 
-# Frontend (Node 18+)
-cd frontend && npm install && npm run build   # then open http://localhost:8000
-# or, while developing:  npm run dev          # http://localhost:5173, proxies the API
+```bash
+git clone https://github.com/koushik2456/Geo-vla.git && cd Geo-vla
+bash scripts/setup.sh                      # Windows: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 
-Sign in as `admin` with the password you chose to reach monitoring, the training studio
-and user management. Anyone can run analyses without an account.
+Then:
+
+```bash
+source .venv/bin/activate                  # Windows: .venv\Scripts\activate
+# edit .env: ADMIN_PASSWORD=…  and  GROQ_API_KEY=gsk_…  (free at console.groq.com/keys)
+python -m training.pipeline                # train both models on synthetic data and promote them (CPU, ~5 min)
+uvicorn main:app --port 8000               # open http://localhost:8000
+```
+
+For frontend development use `cd frontend && npm run dev` (http://localhost:5173, proxies
+the API). Sign in as `admin` with the password from `.env` to reach monitoring, the
+training studio and user management. Anyone can run analyses without an account.
+
+### AI agent: free open models
+
+Free-text questions are planned by an LLM with tool calling. Any **OpenAI-compatible**
+endpoint works; set one key in `.env` and it is picked up automatically
+(`LLM_PROVIDER=auto` tries them in this order):
+
+| Provider | `.env` | Default model | Cost |
+|---|---|---|---|
+| **Groq** (recommended) | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | Free tier, very fast |
+| OpenRouter | `OPENROUTER_API_KEY` | `meta-llama/llama-3.3-70b-instruct` | Free and paid models |
+| Together AI | `TOGETHER_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | Free credits |
+| Any OpenAI-compatible server (vLLM, LM Studio, LiteLLM) | `LLM_BASE_URL`, `LLM_API_KEY` | set `LLM_MODEL` | Self-hosted |
+| Ollama (fully local, offline) | `OLLAMA_URL=http://localhost:11434/v1` | `qwen2.5:7b` | Free |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-5` | Paid |
+
+Override the model with `LLM_MODEL` (e.g. `qwen/qwen3-32b` on Groq) or force a provider
+with `LLM_PROVIDER=groq`. The header chip shows which planner is active (`AI · groq`, or
+`Offline planner`). The agent loop sends the 15 tools as function schemas, runs each
+call the model makes, returns the result, and repeats. It also recovers from the
+occasional malformed tool call that smaller open models produce, and shows any
+`<think>` reasoning in the trace panel. Workflows never need an LLM.
 
 ## Who it's for
 
@@ -71,7 +100,7 @@ period.
 | Agriculture | **Crop health** | Stressed cropland (low NDVI) | `stressed_cropland_km2` … |
 | Agriculture | **Crop season profile** | Monthly cropland NDVI through kharif or rabi, with a timelapse | `peak_ndvi` … |
 
-**Free-text questions** go to the AI agent (Claude with tool use), which composes the
+**Free-text questions** go to the AI agent (an open LLM such as Llama 3.3 on Groq, using tool calling), which composes the
 same 15 tools freely. Example: *"Which built-up areas would flood if the river rises 6 m,
 and how many km of road are affected?"*
 
@@ -82,6 +111,17 @@ and how many km of road are affected?"*
   at any zoom.
 - **2D map and 3D terrain** (MapLibre GL; free AWS terrain tiles, no token): results
   drape over the relief with hillshade.
+- **3D Studio** (Three.js), built from the run's DEM and result layers, with four modes:
+  - **Surface**: satellite or result layer draped on the relief, with a skirted base, a
+    coordinate bounding box and a snapshot button.
+  - **Hypsometric**: an elevation colour ramp with labelled contour lines.
+  - **Contours**: colourful contour lines at a round interval with labels, in the style
+    of a CAD survey drawing.
+  - **Stack**: an exploded view of the layers a model sees, labelled ALL / HEIGHT /
+    NORMAL / AO (combined render, height map, normal map, ambient occlusion). A slider
+    sets the spacing.
+
+  The textures are also served individually (`/runs/{id}/terrain/{kind}.png`).
 - **Globe** (Cesium). With a free Cesium ion token, flood layers become a 3D water
   surface. Its height is calibrated against the terrain along the flood boundary, which
   removes the geoid/ellipsoid offset between the Copernicus DEM and Cesium terrain.
@@ -112,9 +152,20 @@ webhook (`ALERT_WEBHOOK_URL`, e.g. Slack or Teams).
 ## Training studio
 
 Admins can:
-- **train** either model from the UI. Jobs run as subprocesses with live progress: epoch
-  metrics, loss curve, log.
-- **compare** versions in the model registry by test accuracy or F1.
+- **train** either model from the UI. Jobs run as subprocesses with live progress:
+  per-batch loss, accuracy, learning rate and gradient norm, per-epoch train/validation
+  curves, and the log.
+- **inspect everything about the network and the data**. Each job records:
+  - *Dataset*: class counts per split, per-channel mean/std, RGB histograms, per-class
+    colour/brightness/greenness statistics, sample grids, change-pixel ratio (LEVIR).
+  - *Architecture*: every layer with its output shape and parameter count, total and
+    trainable parameters, hyperparameters, loss and optimiser.
+  - *Inside the network*: first-layer convolution filters, feature maps of one image at
+    several depths, and a 2D PCA of the learned embeddings coloured by class.
+  - *Evaluation*: confusion matrix, per-class precision/recall/F1, sample predictions,
+    and for change detection a threshold sweep (precision/recall/F1/IoU vs. threshold).
+- **compare** versions in the model registry by test accuracy or F1. Analytics stay
+  with each registered version.
 - **promote** a version to production. It is hot-reloaded without a restart, and the
   model version appears in every result's method line and in the PDF.
 - **switch back** to the classical fallback at any time.
@@ -123,19 +174,61 @@ Admins can:
 
 | Dataset | Model | How to get it |
 |---|---|---|
-| EuroSAT RGB (27,000 patches, 10 classes) | Land-cover classifier (ResNet-50) | Downloaded automatically on the first run |
-| LEVIR-CD (637 pairs → 10,192 patches) | Change detector (Siamese U-Net) | Download from [justchenhao.github.io/LEVIR](https://justchenhao.github.io/LEVIR/) into `data/levir_cd/{train,val,test}/{A,B,label}` |
+| EuroSAT RGB (27,000 patches, 10 classes) | Land-cover classifier (ResNet-50) | `python -m training.download_data eurosat`, run by the setup script, or the *Download* button in the studio |
+| LEVIR-CD (637 pairs → 10,192 patches) | Change detector (Siamese U-Net) | Download the zip from [justchenhao.github.io/LEVIR](https://justchenhao.github.io/LEVIR/) (or Kaggle), then `python -m training.download_data levir --from LEVIR-CD.zip` |
 | Synthetic (generated) | Both | Always available. Exercises the whole pipeline; the models only suit the demo world. |
 
-For real training on a free GPU, open **`training/colab_train.ipynb`** in Google Colab
-(T4), run it, then upload the resulting `.pth` and `.metrics.json` files in the studio.
+### Training pipeline (command line)
 
-Command line equivalents:
+`training.pipeline` goes through the same job system as the studio, so every run shows
+up there with its curves and analytics, is registered as a new version and is promoted:
+
 ```bash
-python -m training.train_classifier --epochs 10                          # EuroSAT
-python -m training.train_change_detector --epochs 50                     # LEVIR-CD
-python -m training.train_classifier --dataset synthetic --epochs 3       # quick demo
+python -m training.download_data status                        # what is available
+python -m training.pipeline                                     # quick: both models, synthetic data
+python -m training.pipeline --real                              # EuroSAT (+ LEVIR-CD if imported); GPU recommended
+python -m training.pipeline --model classifier --dataset eurosat --max-samples 3000 --img-size 64 --epochs 6   # EuroSAT on a laptop CPU, ~10 min
+python -m training.pipeline --model change_detector --dataset levir --epochs 50
 ```
+
+Other flags: `--batch-size`, `--lr`, `--samples`, `--no-pretrained`, `--no-promote`.
+The individual scripts (`python -m training.train_classifier --help`,
+`training.train_change_detector`) also work standalone, writing a checkpoint, a
+`.metrics.json` and an `analytics/` folder of JSON + PNG figures.
+
+For a free GPU, open **`training/colab_train.ipynb`** in Google Colab (T4). It clones the
+repo, downloads the data, runs the pipeline, displays the analytics and zips the
+models. Upload the `.pth` in the studio (or copy `models/registry/` across).
+
+## Presenting Geo-VLA
+
+**Neural networks class**: focus on the Training studio.
+1. *Dataset explorer*: EuroSAT class balance, the stratified train/val/test split, channel
+   statistics and normalisation, RGB histograms, and sample grids. Discuss why forests
+   are dark and green-heavy while industrial areas are bright.
+2. Start the preset **"Classroom demo (CPU, ~1 min)"**, or an EuroSAT subset run, and
+   watch the per-batch loss, gradient norm and learning-rate schedule live (*Jobs & analytics → Training curves*).
+3. *Network* and *What it learned* tabs: ResNet-50 layer by layer (output shapes, 23.5 M parameters), transfer
+   learning from ImageNet, the conv1 filters (edge and colour detectors), feature maps
+   getting more abstract with depth, and the embedding PCA separating the classes.
+4. *Evaluation* tab: confusion matrix (e.g. highway vs. river mix-ups), per-class F1, and
+   for the Siamese U-Net the threshold sweep and why a weighted BCE + Dice loss is used
+   when only a few percent of pixels change.
+5. Promote the model and run *Urban growth*: the method line now names the new version.
+
+**Remote sensing class**: focus on the full system.
+1. Pick a place (e.g. Bellandur Lake or Wayanad) and run **Deforestation** or
+   **Lake & river encroachment**. Walk through the trace: Sentinel-2 L2A mosaic → NDVI →
+   land-cover map → masks → overlay → zonal statistics.
+2. Explain the bands (B02/B03/B04/B08 at 10 m), NDVI, and the Copernicus DEM (30 m).
+3. Show the **3D Studio**: hypsometric tint, contours and the ALL/HEIGHT/NORMAL/AO stack.
+   Then the before/after swipe and the timelapse.
+4. Run **Flood risk** and show the bathtub model's exposure numbers.
+5. Ask a free-text question to show the LLM composing tools, and download the PDF
+   report and GeoTIFF to open in QGIS.
+
+Without Copernicus keys everything runs on the labelled synthetic demo world, which is
+safe for a live demo with no internet (use `LLM_PROVIDER=none` or Ollama offline).
 
 ## Going live with real data
 
@@ -143,7 +236,7 @@ Copy `.env.example` to `.env`:
 
 | Component | Variable(s) | Without it |
 |---|---|---|
-| AI planner for free-text questions | `ANTHROPIC_API_KEY` | Rule-based planner (workflows are unaffected) |
+| AI planner for free-text questions | `GROQ_API_KEY` (free) or another provider, see [AI agent](#ai-agent-free-open-models) | Rule-based planner (workflows are unaffected) |
 | Sentinel-2, DEM, OSM (switch together) | `COPERNICUS_CLIENT_ID`, `COPERNICUS_CLIENT_SECRET` (free at [dataspace.copernicus.eu](https://dataspace.copernicus.eu) → *User settings → OAuth clients*) | Synthetic demo world, labelled "demo data" everywhere including the PDF |
 | First admin | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | No admin until set |
 | Globe terrain + 3D water | `VITE_CESIUM_ION_TOKEN` in `frontend/.env` (free) | Smooth globe (MapLibre 3D terrain needs no token) |
@@ -156,7 +249,7 @@ flowchart LR
     UI["React app<br/>workflows · questions · dashboard · trace<br/>MapLibre 2D/3D · Cesium · swipe · timelapse<br/>projects · monitoring · training studio"]
     API["FastAPI<br/>auth · runs · tiles · exports<br/>monitors · training"]
     RUN["Run executor<br/>(background threads)"]
-    AG["Agent (Claude tool use)<br/>or fixed workflow plan"]
+    AG["Agent (LLM tool calling: Groq, OpenRouter,<br/>Ollama, … or Claude) or fixed workflow plan"]
     T["15 tools<br/>data · indices · neural · spatial"]
     ST[("SQLite + layer store<br/>data/runs/…")]
     SCH["Monitor scheduler"]
@@ -210,7 +303,8 @@ Interactive docs at `/docs`. The main endpoints:
 | Projects | `GET/POST /projects`, `PATCH/DELETE /projects/{id}` |
 | Catalogue | `GET /workflows`, `GET /geocode?q=`, `GET /tools`, `GET /health` |
 | Monitoring | `GET/POST /monitors`, `PATCH/DELETE /monitors/{id}`, `POST /monitors/{id}/check`, `GET /alerts`, `POST /alerts/read` |
-| Training | `GET /training/datasets`, `GET/POST /training/jobs`, `GET /training/jobs/{id}`, `POST …/cancel`, `GET /models`, `POST /models/{m}/versions/{v}/promote`, `POST /models/{m}/deactivate`, `POST /models/{m}/upload`, `DELETE /models/{m}/versions/{v}` |
+| 3D | `GET /runs/{id}/terrain` (heights, contours, stats), `GET /runs/{id}/terrain/{hypsometric,hillshade,normal,ao}.png` |
+| Training | `GET /training/datasets`, `POST /training/datasets/{d}/download`, `GET /training/datasets/{d}/explore`, `…/samples.png`, `GET/POST /training/jobs`, `GET /training/jobs/{id}`, `GET /training/jobs/{id}/artifacts/{name}`, `POST …/cancel`, `GET /models`, `GET /models/{m}/versions/{v}/artifacts/{name}`, `POST /models/{m}/versions/{v}/promote`, `POST /models/{m}/deactivate`, `POST /models/{m}/upload`, `DELETE /models/{m}/versions/{v}` |
 | Scripts | `POST /query` (synchronous agent run with inline previews; used by the evaluation) |
 
 Private data is protected by bearer tokens. Tiles and downloads accept either the
@@ -233,7 +327,7 @@ coverage:
 
 ```bash
 GEO_VLA_OFFLINE=1 python eval/run_eval.py                  # rule-based baseline
-python eval/run_eval.py --planner claude --out eval/results_claude.json
+python eval/run_eval.py --planner llm --out eval/results_llm.json   # uses the provider in .env
 ```
 
 Offline baseline: recall 0.90, precision 0.98, execution success 1.00, exact coverage
@@ -263,18 +357,19 @@ natural next step, and the training studio is ready for it.
 
 ```
 main.py                 FastAPI app (lifespan: DB, admin bootstrap, scheduler)
-agent.py planner.py     LLM tool-use loop · rule-based planner
+agent.py planner.py     LLM tool-calling loop (OpenAI-compatible / Anthropic) · rule-based planner
 geotools.py             Workspace, tool registry, 15 tools, layer styling
 rendering.py            Colour styles shared by tiles, previews and reports
 config.py geo_utils.py synthetic.py
 api/                    auth · runs/tiles/exports/projects · workflows/monitoring · training
 services/               db · auth · runs · storage · tiles · workflows · insights ·
-                        exports · reports (PDF) · geocode · monitoring · training
+                        exports · reports (PDF) · geocode · monitoring · training · terrain (3D)
 models/                 ResNet-50 classifier · Siamese U-Net change detector
-training/               training scripts · synthetic datasets · Colab notebook
+training/               pipeline · dataset download/stats · training scripts · analytics · Colab notebook
+scripts/                setup.sh · setup.ps1 (one-command setup)
 eval/                   benchmark + harness
-frontend/               React + Vite + MapLibre GL + Cesium
-tests/                  48 tests: tools, agent, API, platform, every workflow, real training job
+frontend/               React + Vite + MapLibre GL + Cesium + Three.js
+tests/                  56 tests: tools, agent, API, platform, every workflow, real training job
 data/gazetteer.json     offline place list
 ```
 

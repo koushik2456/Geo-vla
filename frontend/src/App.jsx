@@ -62,7 +62,7 @@ function Shell() {
     <div className="app">
       <header className="topbar">
         <a className="brand" href="#/">
-          <span className="logo" aria-hidden="true">◆</span> Geo-VLA
+          <span className="logo" aria-hidden="true">◆</span> Geo-VLA<span className="brand-sub">Geospatial AI</span>
         </a>
         <nav>
           {links.filter(([, , show]) => show).map(([id, label]) => (
@@ -72,7 +72,7 @@ function Shell() {
         <div className="topbar-right">
           {health?.status === "ok" && (
             <span className="chips">
-              <span className={`chip ${health.planner === "claude" ? "ok" : "warn"}`} title="Planner">{health.planner === "claude" ? "AI planner" : "offline planner"}</span>
+              <span className={`chip ${health.planner === "llm" ? "ok" : "warn"}`} title={health.model || "Planner"}>{health.planner === "llm" ? `AI · ${health.provider}` : "offline planner"}</span>
               <span className={`chip ${health.data_mode === "live" ? "ok" : "warn"}`} title="Data source">{health.data_mode === "live" ? "live data" : "demo data"}</span>
             </span>
           )}

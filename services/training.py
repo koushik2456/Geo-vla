@@ -34,26 +34,136 @@ MODELS = {
 }
 _GEOTOOLS_KEY = {"classifier": "classifier", "change_detector": "change"}
 _procs: dict = {}
+_threads: dict = {}
 _lock = threading.Lock()
+_downloads: dict = {}   # dataset id -> {"status", "message"}
 
 
 # -- datasets ------------------------------------------------------------------------------
 
 def datasets() -> list:
-    eurosat = os.path.join(ROOT, "data", "eurosat")
-    levir = os.path.join(ROOT, "data", "levir_cd", "train", "A")
-    has_eurosat = os.path.isdir(eurosat) and any(n != ".gitkeep" for n in os.listdir(eurosat))
-    return [
+    from training.datasets import find_eurosat_root, levir_ready
+    has_eurosat = find_eurosat_root() is not None
+    items = [
         {"id": "eurosat", "model": "classifier", "title": "EuroSAT RGB (27,000 patches, 10 classes)",
          "available": has_eurosat, "auto_download": True,
          "how": "Downloaded automatically on first training run (needs internet), or extract EuroSAT_RGB into data/eurosat/."},
         {"id": "levir", "model": "change_detector", "title": "LEVIR-CD (637 image pairs → 10,192 patches)",
-         "available": os.path.isdir(levir) and bool(os.listdir(levir)), "auto_download": False,
+         "available": levir_ready(), "auto_download": False,
          "how": "Download from justchenhao.github.io/LEVIR and extract to data/levir_cd/{train,val,test}/{A,B,label}."},
         {"id": "synthetic", "model": "both", "title": "Synthetic demo data (generated on the fly)",
          "available": True, "auto_download": False,
          "how": "Always available. Exercises the full pipeline; models only suit the offline demo world."},
     ]
+    for d in items:
+        d["download"] = _downloads.get(d["id"])
+    return items
+
+
+def start_download(dataset_id: str) -> dict:
+    """Download EuroSAT in the background (LEVIR-CD must be imported manually)."""
+    if dataset_id != "eurosat":
+        raise ValueError("only EuroSAT can be downloaded automatically; import LEVIR-CD with "
+                         "python -m training.download_data levir --from <zip>")
+    if _downloads.get(dataset_id, {}).get("status") == "running":
+        return _downloads[dataset_id]
+    state = _downloads[dataset_id] = {"status": "running", "message": "starting"}
+
+    def work():
+        from training.datasets import download_eurosat
+        try:
+            download_eurosat(log=lambda m: state.__setitem__("message", m))
+            state.update(status="done", message="EuroSAT is ready")
+        except Exception as exc:
+            state.update(status="failed", message=str(exc))
+    threading.Thread(target=work, daemon=True, name=f"download-{dataset_id}").start()
+    return state
+
+
+def explore_dir(dataset_id: str) -> str:
+    return os.path.join(config.DATA_DIR, "dataset_stats", dataset_id)
+
+
+def explore_dataset(dataset_id: str, refresh: bool = False) -> dict:
+    """Dataset statistics + sample gallery for the studio's dataset explorer (cached)."""
+    out = explore_dir(dataset_id)
+    cached = os.path.join(out, "dataset.json")
+    if os.path.exists(cached) and not refresh:
+        return json.load(open(cached))
+    import numpy as np
+    from PIL import Image
+    from training import datasets as ds
+    from models import EUROSAT_CLASSES
+    if dataset_id in ("synthetic", "eurosat"):
+        if dataset_id == "synthetic":
+            from training.synthetic_data import SyntheticEuroSAT
+            synth = SyntheticEuroSAT(per_class=200)
+            labels = np.array([i // synth.per_class for i in range(len(synth))])
+            load, source = (lambda i: np.array(synth[i][0])), "synthetic EuroSAT-like patches"
+        else:
+            root = ds.find_eurosat_root()
+            if not root:
+                raise ValueError("EuroSAT is not downloaded yet")
+            files, lab = [], []
+            for c, name in enumerate(EUROSAT_CLASSES):
+                for f in sorted(os.listdir(os.path.join(root, name))):
+                    files.append(os.path.join(root, name, f))
+                    lab.append(c)
+            labels = np.array(lab)
+            load, source = (lambda i: np.array(Image.open(files[i]).convert("RGB"))), "EuroSAT RGB"
+        tr, va, te = ds.stratified_split(labels)
+        stats = ds.describe_classification(load, labels, {"train": tr, "val": va, "test": te}, source, out)
+    elif dataset_id in ("synthetic_change", "levir"):
+        if dataset_id == "levir":
+            if not ds.levir_ready():
+                raise ValueError("LEVIR-CD is not imported yet")
+            from training.train_change_detector import LevirCDPatches
+            pairs = LevirCDPatches(ds.LEVIR_DIR, "train")
+            sizes = {s: len(LevirCDPatches(ds.LEVIR_DIR, s)) for s in ("train", "val", "test")}
+            source = "LEVIR-CD"
+        else:
+            from training.synthetic_data import SyntheticChangePairs
+            pairs, sizes, source = SyntheticChangePairs(400), {"train": 400, "val": 50, "test": 50}, "synthetic change pairs"
+        stats = ds.describe_change(pairs.raw, len(pairs), sizes, source, out, max_stats=60)
+    else:
+        raise KeyError(dataset_id)
+    os.makedirs(out, exist_ok=True)
+    with open(cached, "w") as f:
+        json.dump(stats, f, default=float)
+    return stats
+
+
+ARTIFACTS = {"dataset.json", "architecture.json", "evaluation.json", "dataset_samples.png", "filters.png",
+             "feature_maps.png", "predictions.png", "training_curves.png", "confusion_matrix.png"}
+
+
+def artifact_path(job_id: int, name: str) -> str:
+    if name not in ARTIFACTS:
+        raise KeyError(name)
+    path = os.path.join(_job_dir(job_id), "analytics", name)
+    if not os.path.exists(path):
+        raise KeyError(name)
+    return path
+
+
+def version_artifact_path(model: str, version: str, name: str) -> str:
+    if name not in ARTIFACTS or model not in MODELS or not version.startswith("v") or not version[1:].isdigit():
+        raise KeyError(name)
+    path = os.path.join(config.MODEL_REGISTRY_DIR, model, f"{version}_analytics", name)
+    if not os.path.exists(path):
+        raise KeyError(name)
+    return path
+
+
+def job_analytics(job_id: int) -> dict:
+    d = os.path.join(_job_dir(job_id), "analytics")
+    out = {}
+    for name in ("dataset.json", "architecture.json", "evaluation.json"):
+        path = os.path.join(d, name)
+        if os.path.exists(path):
+            out[name.removesuffix(".json")] = json.load(open(path))
+    out["images"] = sorted(n for n in ARTIFACTS if n.endswith(".png") and os.path.exists(os.path.join(d, n)))
+    return out
 
 
 # -- jobs ------------------------------------------------------------------------------------------
@@ -73,6 +183,10 @@ def _command(model: str, dataset: str, p: dict, job_id: int) -> list:
     if dataset == "synthetic":
         cmd += (["--samples-per-class", str(p.get("samples", 200))] if model == "classifier"
                 else ["--synthetic-pairs", str(p.get("samples", 200))])
+    if p.get("max_samples"):
+        cmd += ["--max-samples", str(p["max_samples"])]
+    if model == "classifier" and p.get("img_size"):
+        cmd += ["--img-size", str(p["img_size"])]
     return cmd
 
 
@@ -84,10 +198,11 @@ def validate_params(model: str, dataset: str, p: dict) -> dict:
     out = {"epochs": int(p.get("epochs", 5)), "batch_size": int(p.get("batch_size", 16)),
            "lr": float(p.get("lr", 3e-4 if model == "classifier" else 1e-4)),
            "pretrained": bool(p.get("pretrained", True)), "samples": int(p.get("samples", 200)),
-           "workers": int(p.get("workers", 0))}
+           "workers": int(p.get("workers", 0)), "max_samples": int(p.get("max_samples", 0) or 0),
+           "img_size": int(p.get("img_size", 224 if dataset != "synthetic" else 64))}
     if not (1 <= out["epochs"] <= 500 and 1 <= out["batch_size"] <= 512 and 0 < out["lr"] < 1
-            and 4 <= out["samples"] <= 20000):
-        raise ValueError("epochs 1-500, batch size 1-512, learning rate 0-1, samples 4-20000")
+            and 4 <= out["samples"] <= 20000 and 32 <= out["img_size"] <= 512 and out["max_samples"] >= 0):
+        raise ValueError("epochs 1-500, batch size 1-512, learning rate 0-1, samples 4-20000, image size 32-512")
     return out
 
 
@@ -108,7 +223,17 @@ def start_job(model: str, dataset: str, params: dict, user: dict) -> dict:
                                 start_new_session=True)
         _procs[job_id] = proc
         db.execute("UPDATE training_jobs SET pid = ? WHERE id = ?", (proc.pid, job_id))
-    threading.Thread(target=_watch, args=(job_id, proc, log_file), daemon=True, name=f"train-{job_id}").start()
+    watcher = threading.Thread(target=_watch, args=(job_id, proc, log_file), daemon=True, name=f"train-{job_id}")
+    watcher.start()
+    _threads[job_id] = watcher
+    return get_job(job_id)
+
+
+def wait_for_job(job_id: int, timeout: float = None) -> dict:
+    """Block until a job (and its registration) has finished — used by the CLI pipeline."""
+    thread = _threads.get(job_id)
+    if thread:
+        thread.join(timeout)
     return get_job(job_id)
 
 
@@ -182,6 +307,10 @@ def get_job(job_id: int, detail: bool = True) -> dict:
         job["warnings"] = [e["message"] for e in events if e["event"] == "warning"]
         job["result"] = done
         job["log"] = _log_tail(job_id)
+        job["info"] = [e["message"] for e in events if e["event"] == "info"]
+        job["hyperparameters"] = start.get("hyperparameters") if start else None
+        job["params_count"] = start.get("params") if start else None
+        job["analytics"] = job_analytics(job_id)
     return job
 
 
@@ -253,6 +382,9 @@ def register_version(model: str, checkpoint: str, source: str, job_id: int = Non
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, f"{version}.pth")
     shutil.copyfile(checkpoint, dest)
+    analytics_src = os.path.join(os.path.dirname(checkpoint), "analytics")
+    if os.path.isdir(analytics_src):
+        shutil.copytree(analytics_src, os.path.join(dest_dir, f"{version}_analytics"), dirs_exist_ok=True)
     if metrics is None:
         side = checkpoint.replace(".pth", ".metrics.json")
         metrics = json.load(open(side)) if os.path.exists(side) else {}

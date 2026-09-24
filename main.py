@@ -94,7 +94,7 @@ async def query(req: QueryRequest):
     try:
         result = await run_in_threadpool(agent.run, req.instruction)
     except Exception as exc:
-        if type(exc).__module__.startswith("anthropic"):
+        if type(exc).__module__.startswith(("anthropic", "openai")):
             log.error("LLM call failed: %s", exc)
             raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
         raise
@@ -106,8 +106,9 @@ def health():
     return {
         "status": "ok",
         "version": app.version,
-        "planner": "claude" if config.llm_enabled() else "offline",
-        "model": config.MODEL_NAME if config.llm_enabled() else None,
+        "planner": "llm" if config.llm_enabled() else "offline",
+        "provider": (config.llm_settings() or {}).get("provider"),
+        "model": (config.llm_settings() or {}).get("model"),
         "data_mode": config.data_mode(),
         "checkpoints": {
             "classifier": geotools.model_version("classifier"),

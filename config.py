@@ -4,7 +4,7 @@ config.py — Central runtime configuration, read from environment variables.
 Geo-VLA degrades gracefully so the full pipeline can be demoed with no
 credentials and no trained checkpoints:
 
-  * No ANTHROPIC_API_KEY        -> offline rule-based planner instead of Claude
+  * No LLM key (Groq, OpenRouter, Together, Ollama, Anthropic, …) -> offline rule-based planner
   * No COPERNICUS_CLIENT_ID/SECRET -> synthetic Sentinel-2, DEM and OSM data
   * No .pth checkpoints          -> classical fallbacks (spectral rules, CVA)
 
@@ -21,8 +21,40 @@ def _flag(name: str, default: str = "0") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+# ---------------------------------------------------------------------------
+# Reasoning layer (LLM planner)
+# ---------------------------------------------------------------------------
+# LLM_PROVIDER: auto | groq | openrouter | together | ollama | openai | anthropic | none
+#   groq / openrouter / together / ollama / openai all speak the OpenAI chat-completions
+#   API with function calling, so any open model they host (Llama, Qwen, Mistral,
+#   DeepSeek, gpt-oss, …) can drive the tools. "openai" = any compatible server:
+#   set LLM_BASE_URL (+ LLM_API_KEY). "auto" picks the first provider with a key.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").strip().lower()
+LLM_MODEL = os.getenv("LLM_MODEL", "").strip()
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").strip()
+LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "").strip()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
-MODEL_NAME = os.getenv("GEO_VLA_MODEL", "claude-sonnet-5")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "").strip()   # e.g. http://localhost:11434/v1
+
+PROVIDER_PRESETS = {
+    "groq": {"base_url": "https://api.groq.com/openai/v1", "key": lambda: GROQ_API_KEY,
+             "model": "llama-3.3-70b-versatile"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "key": lambda: OPENROUTER_API_KEY,
+                   "model": "meta-llama/llama-3.3-70b-instruct"},
+    "together": {"base_url": "https://api.together.xyz/v1", "key": lambda: TOGETHER_API_KEY,
+                 "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
+    "ollama": {"base_url": OLLAMA_URL or "http://localhost:11434/v1", "key": lambda: "ollama" if OLLAMA_URL else "",
+               "model": "qwen2.5:7b"},
+    "openai": {"base_url": LLM_BASE_URL, "key": lambda: LLM_API_KEY or ("none" if LLM_BASE_URL else ""),
+               "model": ""},
+    "anthropic": {"base_url": None, "key": lambda: ANTHROPIC_API_KEY, "model": "claude-sonnet-5"},
+}
+MODEL_NAME = os.getenv("GEO_VLA_MODEL", "claude-sonnet-5")  # Anthropic model (kept for compatibility)
 # "summarized" surfaces Claude's reasoning summaries in the trace panel; "off" omits them.
 THINKING_DISPLAY = os.getenv("GEO_VLA_THINKING", "summarized")
 MAX_AGENT_TURNS = int(os.getenv("GEO_VLA_MAX_TURNS", "12"))
@@ -42,8 +74,27 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
 
 
+def llm_settings():
+    """Resolved LLM connection: {provider, base_url, api_key, model} or None (offline planner)."""
+    if OFFLINE or LLM_PROVIDER == "none":
+        return None
+    order = [LLM_PROVIDER] if LLM_PROVIDER != "auto" else ["groq", "openrouter", "together", "openai", "ollama", "anthropic"]
+    for name in order:
+        preset = PROVIDER_PRESETS.get(name)
+        if not preset:
+            continue
+        key = preset["key"]()
+        if not key:
+            continue
+        model = LLM_MODEL or (MODEL_NAME if name == "anthropic" else preset["model"])
+        if not model:
+            continue
+        return {"provider": name, "base_url": LLM_BASE_URL or preset["base_url"], "api_key": key, "model": model}
+    return None
+
+
 def llm_enabled() -> bool:
-    return bool(ANTHROPIC_API_KEY)
+    return llm_settings() is not None
 
 
 # Data mode: "live" (Sentinel-2 + Copernicus DEM + OpenStreetMap over the network)

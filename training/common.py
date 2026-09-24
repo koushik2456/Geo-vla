@@ -44,3 +44,19 @@ def build_with_pretrained_fallback(factory, pretrained: bool, progress: Progress
         progress.emit("warning", message=f"ImageNet weights unavailable ({type(exc).__name__}); "
                                          "training from random initialisation — expect lower accuracy")
         return factory(False), False
+
+
+def read_batches(path: str) -> list:
+    """Batch events from a progress file (for the training-curves figure)."""
+    if not path or not os.path.exists(path):
+        return []
+    out = []
+    with open(path) as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if e.get("event") == "batch":
+                out.append(e)
+    return out
