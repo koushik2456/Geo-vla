@@ -37,3 +37,4 @@ data/training_jobs/
 models/registry/
 models/checkpoints/*.version.json
 models/checkpoints/*.metrics.json
+models/checkpoints/analytics/
