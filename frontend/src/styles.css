@@ -1,0 +1,167 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --text: #1c2430;
+  --muted: #5d6b7e;
+  --border: #dde2e9;
+  --accent: #1f6feb;
+  --accent-text: #ffffff;
+  --ok-bg: #e3f6e8;
+  --ok-text: #17693a;
+  --warn-bg: #fff4d6;
+  --warn-text: #7a5a00;
+  --error-bg: #fde8e8;
+  --error-text: #a11d1d;
+  --code-bg: #f0f3f7;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f141a;
+    --panel: #161d26;
+    --text: #e4e9f0;
+    --muted: #93a1b3;
+    --border: #2a3441;
+    --accent: #4c8dff;
+    --ok-bg: #143322;
+    --ok-text: #7ee2a1;
+    --warn-bg: #3a2f10;
+    --warn-text: #f3cf6b;
+    --error-bg: #3b1616;
+    --error-text: #ff9b9b;
+    --code-bg: #0f141a;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+button:disabled { opacity: 0.55; cursor: default; }
+button.active, button[type="submit"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+.app { display: flex; height: 100%; }
+.sidebar {
+  width: 420px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 16px;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.map-area { position: relative; flex: 1; min-width: 0; }
+.map-wrap, .map { position: absolute; inset: 0; }
+
+.brand h1 { margin: 0; font-size: 22px; }
+.brand p { margin: 2px 0 8px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.chip.ok { background: var(--ok-bg); color: var(--ok-text); }
+.chip.warn { background: var(--warn-bg); color: var(--warn-text); }
+
+.chat form { display: flex; flex-direction: column; gap: 8px; }
+.chat label { font-weight: 600; }
+.chat textarea {
+  font: inherit;
+  resize: vertical;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.aoi-line { font-size: 12px; color: var(--muted); }
+.examples summary { cursor: pointer; color: var(--muted); margin-top: 8px; }
+.example { display: block; width: 100%; text-align: left; margin-top: 6px; font-size: 13px; }
+
+.error { background: var(--error-bg); color: var(--error-text); padding: 8px 10px; border-radius: 6px; }
+
+h2 { font-size: 15px; margin: 0 0 8px; }
+.answer-body p { margin: 0 0 6px; }
+.answer .meta { font-size: 12px; color: var(--muted); }
+
+.trace ol { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.trace li { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+.trace li.thinking p, .trace li.text p { margin: 4px 0 0; color: var(--muted); font-size: 13px; white-space: pre-wrap; }
+.trace .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.trace summary { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.trace .step {
+  width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-text);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0;
+}
+.trace .duration { margin-left: auto; font-size: 12px; color: var(--muted); }
+.trace li.failed { border-color: var(--error-text); }
+.trace .badge { background: var(--error-bg); color: var(--error-text); font-size: 11px; padding: 0 6px; border-radius: 4px; }
+.trace h3 { font-size: 11px; text-transform: uppercase; color: var(--muted); margin: 8px 0 2px; }
+.json { background: var(--code-bg); padding: 6px; border-radius: 4px; overflow-x: auto; font-size: 12px; margin: 0; }
+
+.view-toggle, .aoi-tools { position: absolute; z-index: 2; display: flex; gap: 4px; }
+.view-toggle { top: 12px; left: 12px; }
+.aoi-tools { top: 12px; right: 12px; }
+.view-toggle button, .aoi-tools button { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+
+.layer-panel {
+  position: absolute;
+  z-index: 2;
+  top: 56px;
+  right: 12px;
+  width: 260px;
+  max-height: calc(100% - 140px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+.layer-panel.collapsed { width: auto; padding: 0; }
+.layer-toggle { width: 100%; text-align: left; font-weight: 600; border: none; background: none; padding: 2px 4px; }
+.layer-panel.collapsed .layer-toggle { padding: 6px 12px; }
+.layer-panel ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.layer-panel li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.layer-panel li:last-child { border-bottom: none; }
+.layer-panel label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.layer-panel input[type="range"] { width: 100%; }
+.legend { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.legend .ramp { flex: 1; height: 8px; border-radius: 4px; }
+.legend.classes { flex-wrap: wrap; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: middle; }
+
+.map-busy, .map-loading, .globe-note {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+.map-busy { bottom: 40px; }
+.map-loading { top: 50%; }
+.globe-note { bottom: 12px; font-size: 12px; }
+
+@media (max-width: 800px) {
+  .app { flex-direction: column-reverse; }
+  .sidebar { width: 100%; height: 55%; border-right: none; border-top: 1px solid var(--border); }
+  .map-area { height: 45%; flex: none; }
+  .layer-panel { width: 220px; top: 52px; }
+  .aoi-tools { top: auto; bottom: 40px; left: 12px; right: auto; }
+}

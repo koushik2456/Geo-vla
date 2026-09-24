@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Secrets
+.env
+
+# Data & model artefacts (large; regenerate with training/ scripts)
+data/eurosat/*
+data/levir_cd/*
+data/dem_cache/*
+data/imagery_cache/*
+!data/**/.gitkeep
+models/checkpoints/*.pth
+eval/results*.json
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

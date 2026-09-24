@@ -1,0 +1,33 @@
+# Versions tested together on Python 3.11 (see README for setup).
+# For a CPU-only (much smaller) torch, install it first:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# API
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+python-dotenv==1.2.3
+
+# Reasoning layer
+anthropic==1.8.0
+
+# Vision execution heads (training + inference)
+torch==2.14.0
+torchvision==0.29.0
+segmentation-models-pytorch==0.5.0
+
+# Geospatial + raster
+rasterio==1.4.4
+numpy==2.4.6
+opencv-python-headless==5.0.0.93
+pillow==12.3.0
+scikit-image==0.26.0
+geopandas==1.1.4
+shapely==2.1.2
+pyproj==3.7.2
+requests==2.34.2
+tqdm==4.70.1
+
+# Tests
+pytest==9.1.1
+httpx==0.28.1

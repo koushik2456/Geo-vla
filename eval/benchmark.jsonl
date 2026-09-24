@@ -1,0 +1,10 @@
+{"id": "q01", "instruction": "Show me where deforestation increased near rivers in the last 3 years and estimate terrain slope in those zones.", "required_tools": ["fetch_sentinel2_scene", "classify_scene", "class_mask", "overlay_layers", "fetch_osm_features", "buffer_features", "fetch_dem", "compute_slope", "zonal_stats"]}
+{"id": "q02", "instruction": "Compare the Sentinel-2 imagery between 2021-06-01 and 2025-06-01 and tell me what fraction of the area changed.", "required_tools": ["fetch_sentinel2_scene", "detect_change"]}
+{"id": "q03", "instruction": "What is the dominant land cover in this area?", "required_tools": ["fetch_sentinel2_scene", "classify_scene"]}
+{"id": "q04", "instruction": "How healthy is the vegetation here? Give me the NDVI.", "required_tools": ["fetch_sentinel2_scene", "compute_ndvi"]}
+{"id": "q05", "instruction": "If the river rises by 8 m, how much land floods and what land cover is affected?", "required_tools": ["fetch_dem", "flood_extent", "fetch_sentinel2_scene", "classify_scene", "zonal_stats"]}
+{"id": "q06", "instruction": "What share of the area within 500 m of major roads has slopes steeper than 10 degrees?", "required_tools": ["fetch_osm_features", "buffer_features", "fetch_dem", "compute_slope", "threshold_layer", "overlay_layers"]}
+{"id": "q07", "instruction": "How much forest was lost between 2019 and 2025?", "required_tools": ["fetch_sentinel2_scene", "classify_scene", "class_mask", "overlay_layers"]}
+{"id": "q08", "instruction": "What is the average elevation and terrain slope of this region?", "required_tools": ["fetch_dem", "compute_slope"]}
+{"id": "q09", "instruction": "Where did land change since 2020 within 1 km of the river, and what is the mean NDVI there now?", "required_tools": ["fetch_sentinel2_scene", "detect_change", "fetch_osm_features", "buffer_features", "overlay_layers", "compute_ndvi", "zonal_stats"]}
+{"id": "q10", "instruction": "Find low-lying cropland: fields that would flood with a 3 m water rise.", "required_tools": ["fetch_dem", "flood_extent", "fetch_sentinel2_scene", "classify_scene", "class_mask", "overlay_layers"]}
