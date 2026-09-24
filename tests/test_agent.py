@@ -89,7 +89,7 @@ def test_llm_loop_executes_tools_and_returns_answer():
     assert "unknown layer" in third[1]["content"]
     # The bbox and date context reach the model in the first user turn.
     assert str(BBOX) in fake.calls[0]["messages"][0]["content"]
-    assert len(fake.calls[0]["tools"]) == 13
+    assert len(fake.calls[0]["tools"]) == 15
 
 
 def test_llm_loop_respects_max_turns():

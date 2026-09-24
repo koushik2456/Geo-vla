@@ -26,3 +26,14 @@ frontend/.env
 .DS_Store
 .idea/
 .vscode/
+
+# Bundled offline place list
+!data/gazetteer.json
+
+# Runtime state (database, analysis outputs, training jobs, model versions)
+data/geovla.db*
+data/runs/
+data/training_jobs/
+models/registry/
+models/checkpoints/*.version.json
+models/checkpoints/*.metrics.json

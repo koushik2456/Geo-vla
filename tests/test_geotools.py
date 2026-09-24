@@ -140,7 +140,7 @@ def test_render_every_layer_kind(ws):
 
 def test_tool_schemas_are_well_formed():
     schemas = g.tool_schemas()
-    assert len(schemas) == 13
+    assert len(schemas) == 15
     for s in schemas:
         assert s["input_schema"]["type"] == "object"
         assert set(s["input_schema"]["required"]) <= set(s["input_schema"]["properties"])

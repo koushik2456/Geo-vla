@@ -28,6 +28,7 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import EUROSAT_CLASSES  # noqa: E402
 from models.classifier import SceneClassifier  # noqa: E402
+from training.common import Progress, build_with_pretrained_fallback  # noqa: E402
 
 MEAN, STD = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
 
@@ -45,6 +46,9 @@ def build_datasets(args):
     eval_tf = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(MEAN, STD)])
 
     def make(tf):
+        if args.dataset == "synthetic":
+            from training.synthetic_data import SyntheticEuroSAT
+            return SyntheticEuroSAT(per_class=args.samples_per_class, transform=tf, seed=args.seed)
         if args.image_folder:
             return datasets.ImageFolder(args.image_folder, transform=tf)
         return datasets.EuroSAT(args.data_dir, transform=tf, download=True)
@@ -84,8 +88,19 @@ def main():
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-pretrained", action="store_true", help="Skip ImageNet init (smoke tests only)")
+    p.add_argument("--dataset", choices=["eurosat", "synthetic"], default="eurosat")
+    p.add_argument("--samples-per-class", type=int, default=300, help="synthetic dataset size")
+    p.add_argument("--progress-file", default=None, help="JSON-lines progress for the training studio")
     args = p.parse_args()
+    progress = Progress(args.progress_file)
+    try:
+        run(args, progress)
+    except Exception as exc:
+        progress.emit("error", message=f"{type(exc).__name__}: {exc}")
+        raise
 
+
+def run(args, progress):
     torch.manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_ds, val_ds, test_ds = build_datasets(args)
@@ -94,18 +109,23 @@ def main():
                                             num_workers=args.workers, pin_memory=device.type == "cuda")
     train_dl, val_dl, test_dl = loader(train_ds, True), loader(val_ds, False), loader(test_ds, False)
 
-    model = SceneClassifier(num_classes=len(EUROSAT_CLASSES), pretrained=not args.no_pretrained).to(device)
+    model, pretrained = build_with_pretrained_fallback(
+        lambda pre: SceneClassifier(num_classes=len(EUROSAT_CLASSES), pretrained=pre), not args.no_pretrained, progress)
+    model = model.to(device)
+    progress.emit("start", model="classifier", dataset=args.dataset, epochs=args.epochs,
+                  steps_per_epoch=len(train_dl), train_size=len(train_ds), val_size=len(val_ds),
+                  test_size=len(test_ds), device=str(device), pretrained=pretrained)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, total_steps=args.epochs * len(train_dl))
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    best_acc, history = 0.0, []
+    best_acc, history = -1.0, []
     for epoch in range(1, args.epochs + 1):
         model.train()
         start, total_loss = time.time(), 0.0
-        for x, y in tqdm(train_dl, desc=f"epoch {epoch}/{args.epochs}"):
+        for step, (x, y) in enumerate(tqdm(train_dl, desc=f"epoch {epoch}/{args.epochs}"), 1):
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, enabled=device.type == "cuda"):
@@ -115,21 +135,23 @@ def main():
             scaler.update()
             scheduler.step()
             total_loss += loss.item() * len(x)
+            progress.batch(epoch=epoch, step=step, loss=loss.item())
         val_acc, _ = evaluate(model, val_dl, device)
         history.append({"epoch": epoch, "train_loss": total_loss / len(train_ds), "val_acc": val_acc,
                         "seconds": round(time.time() - start, 1)})
-        print(history[-1])
+        progress.emit("epoch", **history[-1])
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(model.state_dict(), args.out)
 
     model.load_state_dict(torch.load(args.out, map_location=device))
     test_acc, per_class = evaluate(model, test_dl, device)
-    metrics = {"dataset": "EuroSAT RGB", "best_val_acc": best_acc, "test_acc": test_acc,
-               "per_class_test_acc": per_class, "history": history, "args": vars(args)}
+    metrics = {"dataset": "EuroSAT RGB" if args.dataset == "eurosat" else "synthetic EuroSAT-like",
+               "best_val_acc": best_acc, "test_acc": test_acc, "per_class_test_acc": per_class,
+               "pretrained": pretrained, "history": history, "args": vars(args)}
     with open(args.out.replace(".pth", ".metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"test accuracy {test_acc:.4f} — saved {args.out}")
+    progress.emit("done", checkpoint=args.out, test_acc=test_acc, best_val_acc=best_acc, per_class=per_class)
 
 
 if __name__ == "__main__":

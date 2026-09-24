@@ -1,9 +1,21 @@
-"""rendering.py — Turn raster layers into RGBA PNG overlays for the web map."""
+"""
+rendering.py — Colour styling for layers, shared by every output.
+
+A layer's *style* (colour ramp, value range, mask colour, classes present) is
+computed once from the full-resolution data and stored with the layer. The
+same style then drives:
+  * map tiles        (services/tiles.py — any zoom, full resolution)
+  * previews         (small PNG/JPEG for thumbnails and the sync /query API)
+  * PDF report maps  (services/reports.py)
+so colours and legends are identical everywhere.
+"""
 import base64
 import io
 
 import numpy as np
 from PIL import Image
+
+from models import EUROSAT_CLASSES
 
 # (position, (r, g, b)) colour stops
 COLORMAPS = {
@@ -30,20 +42,44 @@ CLASS_COLORS = {
     "SeaLake": (20, 60, 160),
 }
 
+SCALAR_ALPHA, MASK_ALPHA, CLASS_ALPHA = 200, 170, 190
+MAX_PREVIEW_PX = 512
 
-MAX_RENDER_PX = 512
+
+def rgb_css(color) -> str:
+    return "rgb(%d,%d,%d)" % tuple(color)
 
 
-def _downsample(arr: np.ndarray, categorical: bool = False) -> np.ndarray:
-    """Cap overlay size so API responses stay small; the map stretches it to the bbox."""
-    step = int(np.ceil(max(arr.shape[:2]) / MAX_RENDER_PX))
-    if step <= 1:
-        return arr
-    if categorical or arr.ndim == 3:
-        return arr[::step, ::step]
-    rows, cols = (arr.shape[0] // step) * step, (arr.shape[1] // step) * step
-    return arr[:rows, :cols].reshape(rows // step, step, cols // step, step).mean(axis=(1, 3))
+# -- style (computed once per layer) -------------------------------------------
 
+def style_for(kind: str, data, meta: dict) -> dict:
+    """Rendering parameters + legend for a layer, from its full-resolution data."""
+    if kind == "scene":
+        return {"legend": {"type": "none"}}
+    if kind in ("dem", "scalar"):
+        arr = np.asarray(data, dtype=np.float32)
+        finite = arr[np.isfinite(arr)]
+        cmap = "terrain" if kind == "dem" else meta.get("cmap", "viridis")
+        vmin = meta.get("vmin")
+        vmax = meta.get("vmax")
+        vmin = float(np.percentile(finite, 2)) if vmin is None and finite.size else (vmin or 0.0)
+        vmax = float(np.percentile(finite, 98)) if vmax is None and finite.size else (vmax or 1.0)
+        return {"cmap": cmap, "vmin": vmin, "vmax": vmax,
+                "legend": {"type": "gradient", "min": round(vmin, 3), "max": round(vmax, 3),
+                           "unit": meta.get("unit", ""),
+                           "colors": [rgb_css(s[1]) for s in COLORMAPS[cmap]]}}
+    if kind == "mask":
+        color = MASK_COLORS.get(meta.get("style", "default"), MASK_COLORS["default"])
+        return {"color": list(color), "legend": {"type": "mask", "color": rgb_css(color)}}
+    if kind == "classmap":
+        present = np.unique(np.asarray(data)).tolist()
+        classes = {EUROSAT_CLASSES[i]: rgb_css(CLASS_COLORS[EUROSAT_CLASSES[i]])
+                   for i in present if 0 <= i < len(EUROSAT_CLASSES)}
+        return {"legend": {"type": "categorical", "classes": classes}}
+    return {"legend": {"type": "vector"}}
+
+
+# -- colouring (any window of the data) -------------------------------------------
 
 def _apply_cmap(norm: np.ndarray, stops) -> np.ndarray:
     pos = np.array([s[0] for s in stops])
@@ -51,48 +87,48 @@ def _apply_cmap(norm: np.ndarray, stops) -> np.ndarray:
     return rgb.astype(np.uint8)
 
 
-def _to_png_b64(rgba: np.ndarray) -> str:
+_CLASS_LUT = np.array([(*CLASS_COLORS[c], CLASS_ALPHA) for c in EUROSAT_CLASSES], dtype=np.uint8)
+
+
+def colorize(kind: str, data: np.ndarray, style: dict, valid: np.ndarray = None) -> np.ndarray:
+    """RGBA uint8 image for `data` (a full layer or a resampled tile window).
+    `valid` marks pixels inside the layer footprint; others are transparent."""
+    if kind == "scene":
+        rgba = np.concatenate([data.astype(np.uint8), np.full(data.shape[:2] + (1,), 255, np.uint8)], axis=-1)
+    elif kind in ("dem", "scalar"):
+        arr = data.astype(np.float32)
+        norm = np.clip((arr - style["vmin"]) / max(style["vmax"] - style["vmin"], 1e-9), 0, 1)
+        rgb = _apply_cmap(np.nan_to_num(norm), COLORMAPS[style["cmap"]])
+        alpha = np.where(np.isfinite(arr), SCALAR_ALPHA, 0).astype(np.uint8)[..., None]
+        rgba = np.concatenate([rgb, alpha], axis=-1)
+    elif kind == "mask":
+        rgba = np.zeros(data.shape + (4,), dtype=np.uint8)
+        rgba[data.astype(bool)] = (*style["color"], MASK_ALPHA)
+    elif kind == "classmap":
+        rgba = _CLASS_LUT[np.clip(data.astype(np.int64), 0, len(EUROSAT_CLASSES) - 1)]
+    else:
+        raise ValueError(f"cannot colorize layer kind {kind}")
+    if valid is not None:
+        rgba = rgba.copy()
+        rgba[~valid] = 0
+    return rgba
+
+
+def downsample(arr: np.ndarray, max_px: int = MAX_PREVIEW_PX) -> np.ndarray:
+    """Nearest-neighbour thinning so previews stay small."""
+    step = int(np.ceil(max(arr.shape[:2]) / max_px))
+    return arr[::step, ::step] if step > 1 else arr
+
+
+def png_bytes(rgba: np.ndarray) -> bytes:
     buf = io.BytesIO()
     Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", optimize=True)
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    return buf.getvalue()
 
 
-def render_rgb(rgb: np.ndarray) -> str:
-    buf = io.BytesIO()
-    Image.fromarray(_downsample(rgb).astype(np.uint8), mode="RGB").save(buf, format="JPEG", quality=85)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+def preview_png(kind: str, data: np.ndarray, style: dict, max_px: int = MAX_PREVIEW_PX) -> bytes:
+    return png_bytes(colorize(kind, downsample(data, max_px), style))
 
 
-def render_scalar(arr: np.ndarray, cmap: str, vmin: float = None, vmax: float = None, alpha: int = 200) -> tuple:
-    arr = _downsample(arr.astype(np.float32))
-    finite = np.isfinite(arr)
-    vmin = float(np.nanpercentile(arr[finite], 2)) if vmin is None else vmin
-    vmax = float(np.nanpercentile(arr[finite], 98)) if vmax is None else vmax
-    norm = np.clip((arr - vmin) / max(vmax - vmin, 1e-9), 0, 1)
-    rgb = _apply_cmap(np.nan_to_num(norm), COLORMAPS[cmap])
-    a = np.where(finite, alpha, 0).astype(np.uint8)[..., None]
-    legend = {"type": "gradient", "min": round(vmin, 3), "max": round(vmax, 3),
-              "colors": ["rgb(%d,%d,%d)" % s[1] for s in COLORMAPS[cmap]]}
-    return _to_png_b64(np.concatenate([rgb, a], axis=-1)), legend
-
-
-def render_mask(mask: np.ndarray, style: str = "default", alpha: int = 170) -> tuple:
-    color = MASK_COLORS.get(style, MASK_COLORS["default"])
-    mask = _downsample(mask, categorical=True)
-    rgba = np.zeros(mask.shape + (4,), dtype=np.uint8)
-    rgba[mask] = (*color, alpha)
-    legend = {"type": "mask", "color": "rgb(%d,%d,%d)" % color}
-    return _to_png_b64(rgba), legend
-
-
-def render_classmap(classmap: np.ndarray, classes: list, alpha: int = 190) -> tuple:
-    classmap = _downsample(classmap, categorical=True)
-    rgba = np.zeros(classmap.shape + (4,), dtype=np.uint8)
-    present = {}
-    for idx, name in enumerate(classes):
-        sel = classmap == idx
-        if sel.any():
-            color = CLASS_COLORS.get(name, (200, 200, 200))
-            rgba[sel] = (*color, alpha)
-            present[name] = "rgb(%d,%d,%d)" % color
-    return _to_png_b64(rgba), {"type": "categorical", "classes": present}
+def data_url(png: bytes) -> str:
+    return "data:image/png;base64," + base64.b64encode(png).decode()

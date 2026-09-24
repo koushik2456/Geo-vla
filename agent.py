@@ -54,11 +54,17 @@ class GeoVLAAgent:
     """Per-request agent. Holds the workspace of layers produced by tool
     calls and the ordered trace of reasoning, tool inputs and tool outputs."""
 
-    def __init__(self, bbox=None, client=None, use_llm=None):
+    def __init__(self, bbox=None, client=None, use_llm=None, on_event=None):
         self.workspace = geotools.Workspace(bbox)
         self.trace: list = []
         self.use_llm = config.llm_enabled() if use_llm is None else use_llm
         self._client = client
+        self._on_event = on_event   # called with the trace after every new entry (live UI updates)
+
+    def _log(self, entry: dict) -> None:
+        self.trace.append(entry)
+        if self._on_event:
+            self._on_event(self.trace)
 
     @property
     def client(self):
@@ -79,7 +85,7 @@ class GeoVLAAgent:
         except Exception as exc:  # network / data-source failures surface to the LLM, not as a 500
             log.exception("tool %s failed", name)
             output, is_error = {"error": f"{type(exc).__name__}: {exc}"}, True
-        self.trace.append({
+        self._log({
             "type": "tool_call", "tool": name, "input": tool_input, "output": output,
             "is_error": is_error, "duration_ms": round((time.perf_counter() - start) * 1000),
         })
@@ -87,18 +93,34 @@ class GeoVLAAgent:
 
     # -- main entrypoint ----------------------------------------------------
 
-    def run(self, instruction: str, max_turns: int = None) -> dict:
+    def answer(self, instruction: str, max_turns: int = None) -> dict:
+        """Plan and execute a free-text instruction. Layers stay in self.workspace."""
         if self.use_llm:
             answer, meta = self._run_llm(instruction, max_turns or config.MAX_AGENT_TURNS)
         else:
             answer, meta = self._run_offline(instruction)
-        return {
-            "answer": answer,
-            "trace": self.trace,
-            "layers": [geotools.render_layer(layer) for layer in self.workspace.layers.values()],
-            "data_mode": config.data_mode(),
-            **meta,
-        }
+        return {"answer": answer, "trace": self.trace, "data_mode": config.data_mode(), **meta}
+
+    def run(self, instruction: str, max_turns: int = None) -> dict:
+        """answer() plus every layer rendered inline (synchronous /query API)."""
+        result = self.answer(instruction, max_turns)
+        result["layers"] = [geotools.render_layer(layer) for layer in self.workspace.layers.values()]
+        return result
+
+    def run_plan(self, plan, rationale: str = None) -> dict:
+        """Execute a fixed plan (sector workflows): same tools, same trace, no LLM.
+        Returns {"results": {step key: output}, "failed": [step keys]}."""
+        self._log({"type": "text", "text": rationale or plan.rationale})
+        results, failed = {}, []
+        for step in plan.steps:
+            output, is_error = self.execute_tool(step.tool, step.input)
+            if is_error:
+                failed.append(step.key)
+                if not step.optional:
+                    raise geotools.ToolError(f"step '{step.tool}' failed: {output['error']}")
+                continue
+            results[step.key] = output
+        return {"results": results, "failed": failed}
 
     def _context_message(self, instruction: str) -> str:
         bbox = self.workspace.default_bbox
@@ -126,9 +148,9 @@ class GeoVLAAgent:
 
             for block in response.content:
                 if block.type == "thinking" and getattr(block, "thinking", ""):
-                    self.trace.append({"type": "thinking", "text": block.thinking})
+                    self._log({"type": "thinking", "text": block.thinking})
                 elif block.type == "text" and block.text.strip() and response.stop_reason == "tool_use":
-                    self.trace.append({"type": "text", "text": block.text})
+                    self._log({"type": "text", "text": block.text})
 
             meta = {"planner": "claude", "model": config.MODEL_NAME, "usage": usage}
             if response.stop_reason == "refusal":
@@ -157,7 +179,7 @@ class GeoVLAAgent:
     def _run_offline(self, instruction: str) -> tuple:
         planner = OfflinePlanner(today=date.today())
         plan = planner.plan(instruction)
-        self.trace.append({"type": "text", "text": plan.rationale})
+        self._log({"type": "text", "text": plan.rationale})
         results = {}
         for step in plan.steps:
             output, is_error = self.execute_tool(step.tool, step.input)

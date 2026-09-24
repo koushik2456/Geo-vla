@@ -63,3 +63,36 @@ def data_mode() -> str:
 
 def data_live() -> bool:
     return data_mode() == "live"
+
+
+# ---------------------------------------------------------------------------
+# Product features: storage, accounts, monitoring, notifications
+# ---------------------------------------------------------------------------
+
+DATA_DIR = os.getenv("GEO_VLA_DATA_DIR", "./data")
+DB_PATH = os.getenv("GEO_VLA_DB", os.path.join(DATA_DIR, "geovla.db"))
+RUNS_DIR = os.path.join(DATA_DIR, "runs")
+MODEL_REGISTRY_DIR = os.getenv("MODEL_REGISTRY_DIR", "./models/registry")
+TRAINING_JOBS_DIR = os.path.join(DATA_DIR, "training_jobs")
+
+# First admin account, created on startup if no admin exists yet.
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+ALLOW_PUBLIC_SIGNUP = _flag("ALLOW_PUBLIC_SIGNUP", "1")
+SESSION_DAYS = int(os.getenv("SESSION_DAYS", "14"))
+ANON_RUN_TTL_HOURS = int(os.getenv("ANON_RUN_TTL_HOURS", "24"))
+MAX_CONCURRENT_RUNS = int(os.getenv("MAX_CONCURRENT_RUNS", "4"))
+
+# Monitoring scheduler (seconds between checks for due monitors; 0 disables).
+MONITOR_INTERVAL_SEC = int(os.getenv("MONITOR_INTERVAL_SEC", "300"))
+
+# Optional alert delivery.
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", "geo-vla@localhost")
+ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "")
+
+# Place search (OpenStreetMap Nominatim; bundled gazetteer when offline).
+NOMINATIM_URL = os.getenv("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")

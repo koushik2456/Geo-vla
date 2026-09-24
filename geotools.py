@@ -369,7 +369,7 @@ def fetch_dem(ws: Workspace, bbox=None) -> dict:
     else:
         dem = synthetic.synthetic_dem(bbox, grid_shape(bbox, DEM_RESOLUTION_M, max_px=512))
         source = "synthetic (offline demo)"
-    ws.add(Layer(id="dem", kind="dem", bbox=bbox, data=dem, name="Elevation (DEM)"))
+    ws.add(Layer(id="dem", kind="dem", bbox=bbox, data=dem, name="Elevation (DEM)", meta={"unit": "m"}))
     return {"dem_id": "dem", "shape": list(dem.shape), "min_m": round(float(dem.min()), 1),
             "max_m": round(float(dem.max()), 1), "mean_m": round(float(dem.mean()), 1), "source": source}
 
@@ -468,7 +468,7 @@ def compute_ndvi_tool(ws: Workspace, scene_id: str = None) -> dict:
     ndvi = compute_ndvi(scene.data["bands"]["B08"], scene.data["bands"]["B04"])
     date = scene.meta["date"]
     ws.add(Layer(id=f"ndvi_{date}", kind="scalar", bbox=scene.bbox, data=ndvi,
-                 name=f"NDVI {date}", meta={"cmap": "ndvi", "vmin": -0.2, "vmax": 0.9}))
+                 name=f"NDVI {date}", meta={"cmap": "ndvi", "vmin": -0.2, "vmax": 0.9, "date": date}))
     return {"layer_id": f"ndvi_{date}", "mean": round(float(ndvi.mean()), 3),
             "median": round(float(np.median(ndvi)), 3),
             "vegetated_fraction_ndvi_gt_0_4": round(float((ndvi > 0.4).mean()), 4)}
@@ -483,7 +483,7 @@ def compute_slope_tool(ws: Workspace, dem_id: str = None) -> dict:
     dem = ws.resolve(dem_id, "dem")
     slope = compute_slope(dem.data, pixel_size_m(dem.bbox, dem.data.shape))
     ws.add(Layer(id="slope", kind="scalar", bbox=dem.bbox, data=slope, name="Slope (°)",
-                 meta={"cmap": "slope", "vmin": 0, "vmax": 35}))
+                 meta={"cmap": "slope", "vmin": 0, "vmax": 35, "unit": "°"}))
     return {"layer_id": "slope", "mean_slope_deg": round(float(slope.mean()), 2),
             "p90_slope_deg": round(float(np.percentile(slope, 90)), 2),
             "max_slope_deg": round(float(slope.max()), 2),
@@ -509,7 +509,7 @@ def flood_extent_tool(ws: Workspace, water_level_m: float, mode: str = "above_mi
     layer_id = f"flood_{water_level_m:g}m"
     ws.add(Layer(id=layer_id, kind="mask", bbox=dem.bbox, data=mask,
                  name=f"Flood extent (+{water_level_m:g} m)" if mode == "above_min" else f"Flood ≤ {level:g} m",
-                 meta={"style": "flood"}))
+                 meta={"style": "flood", "water_level_m_asl": round(level, 2)}))
     return {"layer_id": layer_id, "water_level_m_asl": round(level, 2), **_mask_stats(mask, dem.bbox)}
 
 
@@ -520,9 +520,27 @@ def flood_extent_tool(ws: Workspace, water_level_m: float, mode: str = "above_mi
 _models: dict = {}
 
 
+CHECKPOINT_FILES = {"classifier": "resnet50_eurosat.pth", "change": "siamese_unet_levircd.pth"}
+
+
 def _checkpoint(name: str):
     path = os.path.join(config.MODEL_CHECKPOINT_DIR, name)
     return path if os.path.exists(path) else None
+
+
+def model_version(key: str):
+    """Version label of the active checkpoint (written by the model registry on promotion)."""
+    ckpt = _checkpoint(CHECKPOINT_FILES[key])
+    sidecar = ckpt and ckpt + ".version.json"
+    if sidecar and os.path.exists(sidecar):
+        with open(sidecar) as f:
+            return json.load(f).get("version")
+    return "unversioned" if ckpt else None
+
+
+def reload_models() -> None:
+    """Forget loaded models so the next call picks up a newly promoted checkpoint."""
+    _models.clear()
 
 
 def _load_model(key: str):
@@ -530,7 +548,7 @@ def _load_model(key: str):
     the checkpoint (or torch) is unavailable."""
     if key in _models:
         return _models[key]
-    ckpt = _checkpoint({"classifier": "resnet50_eurosat.pth", "change": "siamese_unet_levircd.pth"}[key])
+    ckpt = _checkpoint(CHECKPOINT_FILES[key])
     if ckpt is None:
         _models[key] = (None, None)
         return _models[key]
@@ -609,13 +627,14 @@ def classify_scene(ws: Workspace, scene_id: str = None) -> dict:
     model, device = _load_model("classifier")
     if model is not None:
         classmap = _classify_cnn(model, device, scene.data["rgb"])
-        method = "ResNet-50 fine-tuned on EuroSAT (64 px patches)"
+        method = f"ResNet-50 fine-tuned on EuroSAT, model {model_version('classifier')} (64 px patches)"
     else:
         classmap = _classify_spectral(scene.data["bands"])
         method = "spectral rules (fallback — no resnet50_eurosat.pth checkpoint)"
     date = scene.meta["date"]
     layer_id = f"landcover_{date}"
-    ws.add(Layer(id=layer_id, kind="classmap", bbox=scene.bbox, data=classmap, name=f"Land cover {date}"))
+    ws.add(Layer(id=layer_id, kind="classmap", bbox=scene.bbox, data=classmap, name=f"Land cover {date}",
+                 meta={"date": date}))
     counts = np.bincount(classmap.ravel().astype(np.int64), minlength=len(EUROSAT_CLASSES)) / classmap.size
     fractions = {c: round(float(f), 4) for c, f in zip(EUROSAT_CLASSES, counts) if f >= 0.005}
     return {"layer_id": layer_id, "dominant_class": EUROSAT_CLASSES[int(counts.argmax())],
@@ -660,7 +679,7 @@ def detect_change(ws: Workspace, scene_id_1: str, scene_id_2: str) -> dict:
     model, device = _load_model("change")
     if model is not None:
         mask = _change_cnn(model, device, s1.data["rgb"], s2.data["rgb"])
-        method = "Siamese U-Net fine-tuned on LEVIR-CD"
+        method = f"Siamese U-Net fine-tuned on LEVIR-CD, model {model_version('change')}"
     else:
         mask = _change_cva(s1.data["bands"], s2.data["bands"])
         method = "change-vector analysis + Otsu (fallback — no siamese_unet_levircd.pth checkpoint)"
@@ -696,22 +715,47 @@ def threshold_layer(ws: Workspace, layer_id: str, operator: str, value: float) -
     return {"layer_id": new_id, **_mask_stats(mask, layer.bbox)}
 
 
+CLASS_GROUPS = {
+    "built_up": ["Residential", "Industrial", "Highway"],
+    "cropland": ["AnnualCrop", "PermanentCrop"],
+    "vegetation": ["Forest", "HerbaceousVegetation", "Pasture"],
+    "water": ["River", "SeaLake"],
+}
+
+
+def _resolve_classes(class_name=None, class_names=None, group=None) -> list:
+    names = list(class_names or []) + ([class_name] if class_name else []) + CLASS_GROUPS.get(group or "", [])
+    if group and group not in CLASS_GROUPS:
+        raise ToolError(f"group must be one of {list(CLASS_GROUPS)}")
+    bad = [n for n in names if n not in EUROSAT_CLASSES]
+    if bad or not names:
+        raise ToolError(f"unknown or missing classes {bad}; choose from {EUROSAT_CLASSES}")
+    return names
+
+
 @tool(
     "class_mask",
-    "Extract a boolean mask of one land-cover class from a classification layer, e.g. Forest "
-    "in 'landcover_2021-06-01'. Combine two dates with overlay_layers(difference) to get loss.",
-    {"layer_id": {"type": "string"}, "class_name": {"type": "string", "enum": EUROSAT_CLASSES}},
-    required=["layer_id", "class_name"],
+    "Extract a boolean mask of land-cover classes from a classification layer: one class "
+    "(class_name='Forest'), several (class_names), or a group — built_up (Residential, "
+    "Industrial, Highway), cropland, vegetation, water. The id is '<class or group>_<date>', "
+    "e.g. 'forest_2021-06-01', 'built_up_2024-06-01'. Combine dates with overlay_layers.",
+    {"layer_id": {"type": "string"},
+     "class_name": {"type": "string", "enum": EUROSAT_CLASSES},
+     "class_names": {"type": "array", "items": {"type": "string", "enum": EUROSAT_CLASSES}},
+     "group": {"type": "string", "enum": list(CLASS_GROUPS)}},
+    required=["layer_id"],
 )
-def class_mask(ws: Workspace, layer_id: str, class_name: str) -> dict:
+def class_mask(ws: Workspace, layer_id: str, class_name: str = None, class_names: list = None,
+               group: str = None) -> dict:
     layer = ws.get(layer_id, {"classmap"})
-    if class_name not in EUROSAT_CLASSES:
-        raise ToolError(f"class_name must be one of {EUROSAT_CLASSES}")
-    mask = layer.data == EUROSAT_CLASSES.index(class_name)
-    new_id = f"{class_name.lower()}_{layer_id.removeprefix('landcover_')}"
+    names = _resolve_classes(class_name, class_names, group)
+    mask = np.isin(layer.data, [EUROSAT_CLASSES.index(n) for n in names])
+    label = group or ("_".join(n.lower() for n in names) if len(names) > 1 else names[0].lower())
+    new_id = f"{label}_{layer_id.removeprefix('landcover_')}"
+    pretty = group.replace("_", "-").capitalize() if group else " + ".join(names)
     ws.add(Layer(id=new_id, kind="mask", bbox=layer.bbox, data=mask,
-                 name=f"{class_name} ({layer.name})", meta={"style": "class"}))
-    return {"layer_id": new_id, **_mask_stats(mask, layer.bbox)}
+                 name=f"{pretty} ({layer.name})", meta={"style": "class", "date": layer.meta.get("date")}))
+    return {"layer_id": new_id, "classes": names, **_mask_stats(mask, layer.bbox)}
 
 
 @tool(
@@ -812,28 +856,152 @@ def zonal_stats(ws: Workspace, value_layer: str, zone_layer: str) -> dict:
     return result
 
 
+@tool(
+    "time_series",
+    "Track an indicator across several dates (2-12): 'ndvi' (mean NDVI) or 'class_fraction' "
+    "(share of a land-cover class or group, e.g. group='built_up'). Fetches and analyses a "
+    "scene per date (skipping dates without usable imagery) and returns the series; the "
+    "scenes become a timelapse in the UI. Optionally restrict to a zone mask.",
+    {
+        "dates": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 12},
+        "index": {"type": "string", "enum": ["ndvi", "class_fraction"]},
+        "class_name": {"type": "string", "enum": EUROSAT_CLASSES},
+        "group": {"type": "string", "enum": list(CLASS_GROUPS)},
+        "zone_layer": {"type": "string", "description": "Optional mask layer to restrict the statistic to."},
+        "bbox": _BBOX_SCHEMA,
+    },
+    required=["dates", "index"],
+)
+def time_series(ws: Workspace, dates: list, index: str, class_name: str = None, group: str = None,
+                zone_layer: str = None, bbox=None) -> dict:
+    if not 2 <= len(dates) <= 12:
+        raise ToolError("give between 2 and 12 dates")
+    if index not in ("ndvi", "class_fraction"):
+        raise ToolError("index must be 'ndvi' or 'class_fraction'")
+    targets = _resolve_classes(class_name, None, group) if index == "class_fraction" else None
+    zone = ws.get(zone_layer, {"mask"}) if zone_layer else None
+    series, skipped = [], []
+    for date in sorted(dates):
+        try:
+            fetch_sentinel2_scene(ws, date=date, bbox=bbox)
+        except ToolError as exc:
+            skipped.append({"date": date, "reason": str(exc)})
+            continue
+        scene = ws.get(f"s2_{date}")
+        scene.meta["group"] = "timeseries"
+        if index == "ndvi":
+            compute_ndvi_tool(ws, scene_id=scene.id)
+            values = ws.get(f"ndvi_{date}").data
+        else:
+            classify_scene(ws, scene_id=scene.id)
+            values = np.isin(ws.get(f"landcover_{date}").data, [EUROSAT_CLASSES.index(n) for n in targets])
+        ws.get(f"{'ndvi' if index == 'ndvi' else 'landcover'}_{date}").meta["group"] = "timeseries"
+        if zone is not None:
+            values = values[_align(zone.data, values.shape, categorical=True)]
+        value = float(values.mean()) if values.size else float("nan")
+        series.append({"date": date, "value": round(value, 4)})
+    if len(series) < 2:
+        raise ToolError(f"fewer than 2 dates had usable imagery: {skipped}")
+    label = "mean NDVI" if index == "ndvi" else f"fraction {group or class_name}"
+    first, last = series[0]["value"], series[-1]["value"]
+    return {"indicator": label, "series": series, "change": round(last - first, 4),
+            "relative_change_pct": round(100 * (last - first) / first, 1) if first else None,
+            "skipped": skipped}
+
+
+def _mask_sampler(mask: np.ndarray, bbox):
+    min_lon, min_lat, max_lon, max_lat = bbox
+    rows, cols = mask.shape
+
+    def inside(lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
+        c = ((lons - min_lon) / (max_lon - min_lon) * cols).astype(int)
+        r = ((max_lat - lats) / (max_lat - min_lat) * rows).astype(int)
+        ok = (c >= 0) & (c < cols) & (r >= 0) & (r < rows)
+        out = np.zeros(lons.shape, dtype=bool)
+        out[ok] = mask[r[ok], c[ok]]
+        return out
+    return inside
+
+
+@tool(
+    "features_in_zone",
+    "Count OSM features (roads, rivers, buildings) that intersect a zone mask and measure the "
+    "length (km) of lines inside it — e.g. kilometres of road inside a flood zone, or "
+    "buildings inside a change zone.",
+    {"layer_id": {"type": "string", "description": "vector layer, e.g. 'osm_roads'"},
+     "zone_layer": {"type": "string", "description": "mask layer id"}},
+    required=["layer_id", "zone_layer"],
+)
+def features_in_zone(ws: Workspace, layer_id: str, zone_layer: str) -> dict:
+    import geopandas as gpd
+    import shapely
+    from pyproj import Transformer
+
+    vec = ws.get(layer_id, {"vector"})
+    zone = ws.get(zone_layer, {"mask"})
+    if not vec.data:
+        return {"features_total": 0, "features_in_zone": 0, "length_km_in_zone": 0.0}
+    inside = _mask_sampler(zone.data, zone.bbox)
+    series = gpd.GeoSeries(vec.data, crs="EPSG:4326")
+    utm = series.estimate_utm_crs()
+    to_ll = Transformer.from_crs(utm, "EPSG:4326", always_xy=True)
+    metric = series.to_crs(utm)
+    hit_count, length_m = 0, 0.0
+    step = 10.0  # metres between sample points along lines
+    for geom in metric:
+        line = geom.boundary if geom.geom_type == "Polygon" else geom
+        if line.is_empty or line.length == 0:
+            continue
+        n = max(int(line.length // step), 1)
+        pts = shapely.line_interpolate_point(line, (np.arange(n) + 0.5) * line.length / n)
+        xy = shapely.get_coordinates(pts)
+        lon, lat = to_ll.transform(xy[:, 0], xy[:, 1])
+        hits = inside(np.asarray(lon), np.asarray(lat))
+        if geom.geom_type == "Polygon":
+            c = geom.centroid
+            clon, clat = to_ll.transform(c.x, c.y)
+            hits = np.append(hits, inside(np.array([clon]), np.array([clat])))
+        elif hits.any():
+            length_m += line.length * hits.mean()
+        hit_count += bool(hits.any())
+    return {"features_total": len(vec.data), "features_in_zone": hit_count,
+            "length_km_in_zone": round(length_m / 1000, 3)}
+
+
 # ---------------------------------------------------------------------------
-# Rendering layers for the web map
+# Layer styling + rendering for the web map
 # ---------------------------------------------------------------------------
 
+def layer_style(layer: Layer) -> dict:
+    """Style computed once from the full-resolution data (cached on the layer)."""
+    if "_style" not in layer.meta:
+        data = layer.data["rgb"] if layer.kind == "scene" else layer.data
+        layer.meta["_style"] = rendering.style_for(layer.kind, data, layer.meta)
+    return layer.meta["_style"]
+
+
+def vector_geojson(layer: Layer) -> dict:
+    from shapely.geometry import mapping
+    return {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": mapping(g), "properties": {}} for g in layer.data]}
+
+
+def layer_summary(layer: Layer) -> dict:
+    """JSON-safe description of a layer (no pixel data)."""
+    meta = {k: v for k, v in layer.meta.items() if not k.startswith("_")}
+    out = {"id": layer.id, "name": layer.name, "kind": layer.kind, "bbox": layer.bbox,
+           "legend": layer_style(layer)["legend"], "meta": meta}
+    if layer.kind == "mask":
+        out["stats"] = _mask_stats(layer.data, layer.bbox)
+    return out
+
+
 def render_layer(layer: Layer) -> dict:
-    out = {"id": layer.id, "name": layer.name, "kind": layer.kind, "bbox": layer.bbox}
-    if layer.kind == "scene":
-        out["image"] = rendering.render_rgb(layer.data["rgb"])
-        out["legend"] = {"type": "none"}
-    elif layer.kind == "dem":
-        out["image"], out["legend"] = rendering.render_scalar(layer.data, "terrain")
-    elif layer.kind == "scalar":
-        m = layer.meta
-        out["image"], out["legend"] = rendering.render_scalar(layer.data, m.get("cmap", "viridis"),
-                                                              m.get("vmin"), m.get("vmax"))
-    elif layer.kind == "mask":
-        out["image"], out["legend"] = rendering.render_mask(layer.data, layer.meta.get("style", "default"))
-    elif layer.kind == "classmap":
-        out["image"], out["legend"] = rendering.render_classmap(layer.data, EUROSAT_CLASSES)
-    elif layer.kind == "vector":
-        from shapely.geometry import mapping
-        out["geojson"] = {"type": "FeatureCollection", "features": [
-            {"type": "Feature", "geometry": mapping(g), "properties": {}} for g in layer.data]}
-        out["legend"] = {"type": "vector"}
+    """Layer summary plus an inline preview image (used by the synchronous /query API)."""
+    out = layer_summary(layer)
+    if layer.kind == "vector":
+        out["geojson"] = vector_geojson(layer)
+    else:
+        data = layer.data["rgb"] if layer.kind == "scene" else layer.data
+        out["image"] = rendering.data_url(rendering.preview_png(layer.kind, data, layer_style(layer)))
     return out

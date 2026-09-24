@@ -31,6 +31,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.change_detector import SiameseChangeDetector  # noqa: E402
+from training.common import Progress, build_with_pretrained_fallback  # noqa: E402
 
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -111,19 +112,42 @@ def main():
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-pretrained", action="store_true", help="Skip ImageNet init (smoke tests only)")
+    p.add_argument("--dataset", choices=["levir", "synthetic"], default="levir")
+    p.add_argument("--synthetic-pairs", type=int, default=400, help="synthetic training pairs")
+    p.add_argument("--progress-file", default=None, help="JSON-lines progress for the training studio")
     args = p.parse_args()
+    progress = Progress(args.progress_file)
+    try:
+        run(args, progress)
+    except Exception as exc:
+        progress.emit("error", message=f"{type(exc).__name__}: {exc}")
+        raise
 
+
+def run(args, progress):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_ds = LevirCDPatches(args.data_dir, "train", augment=True)
-    val_ds, test_ds = LevirCDPatches(args.data_dir, "val"), LevirCDPatches(args.data_dir, "test")
+    if args.dataset == "synthetic":
+        from training.synthetic_data import SyntheticChangePairs
+        n = args.synthetic_pairs
+        train_ds = SyntheticChangePairs(n, seed=args.seed, augment=True)
+        val_ds = SyntheticChangePairs(max(n // 8, 8), seed=args.seed + 1)
+        test_ds = SyntheticChangePairs(max(n // 8, 8), seed=args.seed + 2)
+    else:
+        train_ds = LevirCDPatches(args.data_dir, "train", augment=True)
+        val_ds, test_ds = LevirCDPatches(args.data_dir, "val"), LevirCDPatches(args.data_dir, "test")
     print(f"train={len(train_ds)} val={len(val_ds)} test={len(test_ds)} patches, device={device}")
     loader = lambda ds, shuffle: DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle,  # noqa: E731
                                             num_workers=args.workers, pin_memory=device.type == "cuda")
     train_dl, val_dl, test_dl = loader(train_ds, True), loader(val_ds, False), loader(test_ds, False)
 
-    model = SiameseChangeDetector(pretrained=not args.no_pretrained).to(device)
+    model, pretrained = build_with_pretrained_fallback(
+        lambda pre: SiameseChangeDetector(pretrained=pre), not args.no_pretrained, progress)
+    model = model.to(device)
+    progress.emit("start", model="change_detector", dataset=args.dataset, epochs=args.epochs,
+                  steps_per_epoch=len(train_dl), train_size=len(train_ds), val_size=len(val_ds),
+                  test_size=len(test_ds), device=str(device), pretrained=pretrained)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     # Change pixels are ~5% of LEVIR-CD, so weight positives and add Dice.
@@ -134,7 +158,7 @@ def main():
     for epoch in range(1, args.epochs + 1):
         model.train()
         start, total = time.time(), 0.0
-        for a, b, y in tqdm(train_dl, desc=f"epoch {epoch}/{args.epochs}"):
+        for step, (a, b, y) in enumerate(tqdm(train_dl, desc=f"epoch {epoch}/{args.epochs}"), 1):
             a, b, y = a.to(device), b.to(device), y.to(device)
             logits = model(a, b)
             loss = F.binary_cross_entropy_with_logits(logits, y, pos_weight=pos_weight) + dice_loss(logits, y)
@@ -142,11 +166,12 @@ def main():
             loss.backward()
             optimizer.step()
             total += loss.item() * len(y)
+            progress.batch(epoch=epoch, step=step, loss=loss.item())
         scheduler.step()
         val = evaluate(model, val_dl, device)
         history.append({"epoch": epoch, "train_loss": total / len(train_ds), **{f"val_{k}": v for k, v in val.items()},
                         "seconds": round(time.time() - start, 1)})
-        print(history[-1])
+        progress.emit("epoch", **history[-1])
         if val["f1"] > best_f1:
             best_f1 = val["f1"]
             torch.save(model.state_dict(), args.out)
@@ -154,9 +179,10 @@ def main():
     model.load_state_dict(torch.load(args.out, map_location=device))
     test = evaluate(model, test_dl, device)
     with open(args.out.replace(".pth", ".metrics.json"), "w") as f:
-        json.dump({"dataset": "LEVIR-CD (256px patches)", "best_val_f1": best_f1, "test": test,
+        json.dump({"dataset": "LEVIR-CD (256px patches)" if args.dataset == "levir" else "synthetic change pairs",
+                   "best_val_f1": best_f1, "test": test, "pretrained": pretrained,
                    "history": history, "args": vars(args)}, f, indent=2)
-    print(f"test: {test} — saved {args.out}")
+    progress.emit("done", checkpoint=args.out, test=test, best_val_f1=best_f1)
 
 
 if __name__ == "__main__":

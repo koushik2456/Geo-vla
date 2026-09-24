@@ -1,14 +1,21 @@
 """
-main.py — FastAPI backend exposing the Geo-VLA agent to the web frontend.
+main.py — FastAPI backend for Geo-VLA.
 
 Run with:
     uvicorn main:app --reload --port 8000
 
+Routers:
+  api/auth_api.py        sign-in, sign-up, admin user management
+  api/runs_api.py        analyses (background runs), projects, sharing, tiles, PDF/GeoTIFF/GeoJSON
+  api/monitoring_api.py  sector workflows, place search, monitored areas, alerts
+  api/training_api.py    training studio and model registry (admin)
+
 If frontend/dist exists (after `npm run build`), it is served at / so a
-single container can host the whole demo.
+single container can host the whole product.
 """
 import logging
 import os
+from contextlib import asynccontextmanager
 
 import config  # loads .env before anything reads the environment
 
@@ -20,20 +27,42 @@ from pydantic import BaseModel, Field, field_validator
 
 import geotools
 from agent import GeoVLAAgent
+from api import auth_api, monitoring_api, runs_api, training_api
 from geo_utils import validate_bbox
+from services import auth, db, monitoring, runs, training
 
 logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("geo-vla.api")
 
-app = FastAPI(title="Geo-VLA API", version="0.1.0",
-              description="Tool-augmented vision-language-action agent for geospatial reasoning.")
+scheduler = monitoring.Scheduler(config.MONITOR_INTERVAL_SEC)
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    db.init()
+    auth.ensure_admin()
+    training.recover_after_restart()
+    db.execute("UPDATE runs SET status = 'failed', error = 'server restarted during the analysis' "
+               "WHERE status IN ('queued', 'running')")
+    runs.cleanup_anonymous()
+    scheduler.start()
+    yield
+    scheduler.stop()
+
+
+app = FastAPI(title="Geo-VLA API", version="0.2.0", lifespan=lifespan,
+              description="Tool-augmented vision-language-action platform for geospatial decision support.")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,  # set CORS_ORIGINS to your frontend origin before deploying
     allow_methods=["*"],
     allow_headers=["*"],
 )
+for router in (auth_api.router, runs_api.router, monitoring_api.router, training_api.router):
+    app.include_router(router)
 
+
+# -- synchronous agent endpoint (scripts, evaluation, simple API clients) ----------------------------
 
 class QueryRequest(BaseModel):
     instruction: str = Field(..., max_length=2000)
@@ -57,11 +86,12 @@ class QueryResponse(BaseModel):
 
 @app.post("/query", response_model=QueryResponse)
 async def query(req: QueryRequest):
+    """Run the agent and wait for the answer, with layers inlined as preview images.
+    The web app uses POST /runs instead (background, live trace, full-resolution tiles)."""
     if not req.instruction.strip():
         raise HTTPException(status_code=400, detail="instruction must not be empty")
     agent = GeoVLAAgent(bbox=req.bbox)
     try:
-        # Tools are CPU/network bound and synchronous; keep the event loop free.
         result = await run_in_threadpool(agent.run, req.instruction)
     except Exception as exc:
         if type(exc).__module__.startswith("anthropic"):
@@ -73,16 +103,18 @@ async def query(req: QueryRequest):
 
 @app.get("/health")
 def health():
-    ckpt = lambda name: os.path.exists(os.path.join(config.MODEL_CHECKPOINT_DIR, name))  # noqa: E731
     return {
         "status": "ok",
+        "version": app.version,
         "planner": "claude" if config.llm_enabled() else "offline",
         "model": config.MODEL_NAME if config.llm_enabled() else None,
         "data_mode": config.data_mode(),
         "checkpoints": {
-            "classifier": ckpt("resnet50_eurosat.pth"),
-            "change_detector": ckpt("siamese_unet_levircd.pth"),
+            "classifier": geotools.model_version("classifier"),
+            "change_detector": geotools.model_version("change"),
         },
+        "monitoring": config.MONITOR_INTERVAL_SEC > 0,
+        "signup_open": config.ALLOW_PUBLIC_SIGNUP,
     }
 
 

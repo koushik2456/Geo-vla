@@ -20,6 +20,7 @@ class Step:
     key: str
     tool: str
     input: dict
+    optional: bool = False   # failure is reported but does not stop the plan (e.g. OSM unavailable)
 
 
 @dataclass
@@ -30,8 +31,8 @@ class Plan:
     zone: str = None          # id of the final "focus" mask, if any
     dates: tuple = ()
 
-    def add(self, key: str, tool: str, **tool_input) -> None:
-        self.steps.append(Step(key, tool, tool_input))
+    def add(self, key: str, tool: str, _optional: bool = False, **tool_input) -> None:
+        self.steps.append(Step(key, tool, tool_input, _optional))
 
 
 _FEATURES = {"river": "water", "stream": "water", "water": "water", "lake": "water",
