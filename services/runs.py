@@ -159,11 +159,16 @@ def public_view(run: dict, user=None) -> dict:
     out["layers"] = []
     for layer in run["layers"]:
         item = {k: v for k, v in layer.items() if k != "style"}
+        base = f"/runs/{run['id']}/layers/{layer['id']}"
+        item["downloads"] = {}
         if layer["kind"] == "vector":
-            item["geojson_url"] = f"/runs/{run['id']}/layers/{layer['id']}.geojson"
+            item["geojson_url"] = f"{base}.geojson"
         else:
             item["tiles"] = f"/runs/{run['id']}/tiles/{layer['id']}/{{z}}/{{x}}/{{y}}.png"
-            item["preview_url"] = f"/runs/{run['id']}/layers/{layer['id']}/preview.png"
+            item["preview_url"] = f"{base}/preview.png"
+            item["downloads"]["geotiff"] = f"{base}.tif"
+        if layer["kind"] in ("vector", "mask", "classmap"):
+            item["downloads"]["geojson"] = f"{base}.geojson"
         out["layers"].append(item)
     out["can_edit"] = can_write(run, user)
     out["share_token"] = run["share_token"] if out["can_edit"] else None

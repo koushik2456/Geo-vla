@@ -187,7 +187,8 @@ class FloodRisk(Workflow):
         if r.get("flood_lc", {}).get("class_fractions"):
             charts.append(_class_bar("Land cover inside the flood zone", r["flood_lc"]["class_fractions"],
                                      f["area_km2"]))
-        return lines, figures, metrics, charts, "built_up_at_risk"
+        focus = "built_up_at_risk" if metrics["built_up_at_risk_km2"] > 0 else f"flood_{p['water_rise_m']:g}m"
+        return lines, figures, metrics, charts, focus
 
 
 class FloodScenarios(Workflow):

@@ -5,11 +5,10 @@ function Json({ value }) {
 }
 
 /** The transparent reasoning trace: every thought, tool call, input and output, in order. */
-export default function TracePanel({ trace }) {
+export default function TracePanel({ trace, running }) {
   let step = 0;
   return (
     <section className="trace">
-      <h2>Reasoning trace</h2>
       <ol>
         {trace.map((item, i) => {
           if (item.type === "tool_call") {
@@ -40,6 +39,11 @@ export default function TracePanel({ trace }) {
             </li>
           );
         })}
+        {running && (
+          <li className="pending">
+            <span className="spinner" aria-hidden="true" /> working…
+          </li>
+        )}
       </ol>
     </section>
   );

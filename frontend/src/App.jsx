@@ -1,117 +1,113 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
-import { getHealth, runQuery } from "./api.js";
-import ChatPanel from "./components/ChatPanel.jsx";
-import TracePanel from "./components/TracePanel.jsx";
-import LayerPanel from "./components/LayerPanel.jsx";
-import MapView from "./components/MapView.jsx";
-import { defaultLayerState } from "./layers.js";
-
-// Cesium is large — only load it when the globe view is opened.
-const GlobeView = lazy(() => import("./components/GlobeView.jsx"));
+import React, { useCallback, useEffect, useState } from "react";
+import { api } from "./api.js";
+import { AuthProvider, useAuth } from "./auth.jsx";
+import { navigate, useRoute } from "./router.js";
+import AdminPage from "./pages/AdminPage.jsx";
+import AnalyzePage from "./pages/AnalyzePage.jsx";
+import LoginPage from "./pages/LoginPage.jsx";
+import MonitoringPage from "./pages/MonitoringPage.jsx";
+import ProjectsPage from "./pages/ProjectsPage.jsx";
+import StudioPage from "./pages/StudioPage.jsx";
 
 const DEFAULT_AOI = [77.5, 12.9, 77.56, 12.96]; // Bengaluru outskirts, ~6.5 km square
 
-export default function App() {
+function Shell() {
+  const { user, ready, logout, can } = useAuth();
+  const route = useRoute();
   const [health, setHealth] = useState(null);
+  const [catalog, setCatalog] = useState(null);
   const [aoi, setAoi] = useState(DEFAULT_AOI);
-  const [view, setView] = useState("2d"); // 2d | terrain | globe
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [result, setResult] = useState(null);
-  const [layerState, setLayerState] = useState({}); // id -> { visible, opacity }
+  const [place, setPlace] = useState("Bengaluru outskirts");
+  const [unread, setUnread] = useState(0);
+  const [menu, setMenu] = useState(false);
 
   useEffect(() => {
-    getHealth().then(setHealth).catch((e) => setError(e.message));
+    api("/health").then(setHealth).catch(() => setHealth({ status: "down" }));
+    api("/workflows").then(setCatalog).catch(() => {});
   }, []);
 
-  const submit = useCallback(
-    async (instruction) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await runQuery(instruction, aoi);
-        setLayerState(defaultLayerState(res.layers));
-        setResult(res);
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [aoi],
-  );
+  const refreshAlerts = useCallback(() => {
+    if (user) api("/alerts").then((a) => setUnread(a.unread)).catch(() => {});
+    else setUnread(0);
+  }, [user]);
+  useEffect(() => {
+    refreshAlerts();
+    const t = setInterval(refreshAlerts, 30000);
+    return () => clearInterval(t);
+  }, [refreshAlerts]);
 
-  const layers = result?.layers ?? [];
-  const mapProps = { aoi, onAoiChange: setAoi, layers, layerState };
+  const [page, arg] = route;
+  const links = [
+    ["", "Analyze", true],
+    ["projects", "Projects", !!user],
+    ["monitoring", "Monitoring", can("official")],
+    ["studio", "Training studio", can("admin")],
+    ["admin", "Users", can("admin")],
+  ];
+  const active = (id) => (id === "" ? !page || page === "run" || page === "share" : page === id);
+  const guard = (role, el) => (!ready ? null : can(role) ? el : <div className="page narrow"><div className="card">This page needs the <b>{role}</b> role. {!user && <a href="#/login">Sign in</a>}</div></div>);
+
+  let body;
+  if (page === "login") body = <LoginPage />;
+  else if (page === "projects") body = guard("public", <ProjectsPage />);
+  else if (page === "monitoring") body = guard("official", <MonitoringPage catalog={catalog} aoi={aoi} place={place} onAlertsChanged={refreshAlerts} />);
+  else if (page === "studio") body = guard("admin", <StudioPage />);
+  else if (page === "admin") body = guard("admin", <AdminPage />);
+  else body = (
+    <AnalyzePage runId={page === "run" ? arg : null} shareToken={page === "share" ? arg : null} aoi={aoi} setAoi={setAoi}
+      place={place} setPlace={setPlace} health={health} catalog={catalog} />
+  );
 
   return (
     <div className="app">
-      <aside className="sidebar">
-        <header className="brand">
-          <h1>Geo-VLA</h1>
-          <p>Tool-augmented vision-language-action agent for geospatial reasoning</p>
-          {health && (
-            <div className="chips">
-              <span className={`chip ${health.planner === "claude" ? "ok" : "warn"}`}>
-                planner: {health.planner === "claude" ? health.model : "offline rules"}
-              </span>
-              <span className={`chip ${health.data_mode === "live" ? "ok" : "warn"}`}>data: {health.data_mode}</span>
-              <span className={`chip ${health.checkpoints.classifier ? "ok" : "warn"}`}>
-                classifier: {health.checkpoints.classifier ? "trained" : "fallback"}
-              </span>
-              <span className={`chip ${health.checkpoints.change_detector ? "ok" : "warn"}`}>
-                change model: {health.checkpoints.change_detector ? "trained" : "fallback"}
-              </span>
-            </div>
-          )}
-        </header>
-
-        <ChatPanel aoi={aoi} loading={loading} onSubmit={submit} />
-
-        {error && <div className="error">⚠ {error}</div>}
-
-        {result && (
-          <section className="answer">
-            <h2>Answer</h2>
-            <div className="answer-body">
-              {result.answer.split("\n").map((line, i) => (
-                <p key={i}>{line.replace(/^_(.*)_$/, "$1")}</p>
-              ))}
-            </div>
-            <div className="meta">
-              {result.planner === "claude" ? result.model : "offline planner"} · data {result.data_mode}
-              {result.usage && ` · ${result.usage.input_tokens + result.usage.output_tokens} tokens`}
-            </div>
-          </section>
-        )}
-
-        {result && <TracePanel trace={result.trace} />}
-      </aside>
-
-      <main className="map-area">
-        <div className="view-toggle" role="tablist" aria-label="Map view">
-          {[
-            ["2d", "2D map"],
-            ["terrain", "3D terrain"],
-            ["globe", "Globe"],
-          ].map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={view === id} className={view === id ? "active" : ""} onClick={() => setView(id)}>
-              {label}
-            </button>
+      <header className="topbar">
+        <a className="brand" href="#/">
+          <span className="logo" aria-hidden="true">◆</span> Geo-VLA
+        </a>
+        <nav>
+          {links.filter(([, , show]) => show).map(([id, label]) => (
+            <a key={id} href={`#/${id}`} className={active(id) ? "active" : ""}>{label}</a>
           ))}
+        </nav>
+        <div className="topbar-right">
+          {health?.status === "ok" && (
+            <span className="chips">
+              <span className={`chip ${health.planner === "claude" ? "ok" : "warn"}`} title="Planner">{health.planner === "claude" ? "AI planner" : "offline planner"}</span>
+              <span className={`chip ${health.data_mode === "live" ? "ok" : "warn"}`} title="Data source">{health.data_mode === "live" ? "live data" : "demo data"}</span>
+            </span>
+          )}
+          {health?.status === "down" && <span className="chip bad">backend offline</span>}
+          {user && can("official") && (
+            <button className="bell" onClick={() => navigate("/monitoring")} aria-label={`${unread} unread alerts`}>
+              🔔{unread > 0 && <span className="bell-count">{unread}</span>}
+            </button>
+          )}
+          {user ? (
+            <div className="user-menu">
+              <button onClick={() => setMenu((m) => !m)} aria-expanded={menu}>
+                {user.full_name || user.username} <span className="role">{user.role}</span>
+              </button>
+              {menu && (
+                <div className="menu" onMouseLeave={() => setMenu(false)}>
+                  <div className="muted small">{user.organization || user.username}</div>
+                  <button onClick={() => { setMenu(false); logout(); navigate("/"); }}>Sign out</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            ready && <a className="button" href="#/login">Sign in</a>
+          )}
         </div>
-
-        {view === "globe" ? (
-          <Suspense fallback={<div className="map-loading">Loading 3D globe…</div>}>
-            <GlobeView {...mapProps} />
-          </Suspense>
-        ) : (
-          <MapView {...mapProps} terrain={view === "terrain"} />
-        )}
-
-        {layers.length > 0 && <LayerPanel layers={layers} layerState={layerState} onChange={setLayerState} />}
-        {loading && <div className="map-busy">Agent is reasoning and running tools…</div>}
-      </main>
+      </header>
+      {body}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Shell />
+    </AuthProvider>
   );
 }
