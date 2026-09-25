@@ -304,13 +304,15 @@ export function EvaluationView({ ev, model }) {
   const classes = ev.classes;
   const per = ev.per_class;
   const supported = classes.filter((c) => per[c].support);
+  // Training evaluates on the validation split; the test split is scored only by a sealed confirmation run.
+  const splitName = ev.split === "val" ? "Validation" : "Test";
   return (
     <div className="tab-body">
       <div className="readout">
-        <Stat label="Test accuracy" value={pct(ev.accuracy)} />
+        <Stat label={`${splitName} accuracy`} value={pct(ev.accuracy)} />
         <Stat label="Macro F1" value={pct(ev.macro_f1)} />
-        <Stat label="Test loss" value={fmt(ev.test_loss, 3)} />
-        <Stat label="Test images" value={Object.values(per).reduce((a, v) => a + v.support, 0)} />
+        <Stat label={`${splitName} loss`} value={fmt(ev.val_loss ?? ev.test_loss, 3)} />
+        <Stat label={`${splitName} images`} value={Object.values(per).reduce((a, v) => a + v.support, 0)} />
       </div>
       <div className="studio-grid">
         <div className="card"><h3 className="section-title">Confusion matrix</h3><ConfusionMatrix report={ev} /></div>

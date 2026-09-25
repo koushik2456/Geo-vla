@@ -89,7 +89,12 @@ def download_eurosat(base: str = EUROSAT_DIR, log=print) -> str:
 
 
 def stratified_split(labels, val_frac=0.1, test_frac=0.1, max_samples=None, seed=42):
-    """Per-class shuffled split so every class appears in train/val/test in proportion."""
+    """Per-class shuffled train/val/test split.
+
+    The split is always computed on the FULL dataset, so the test indices for a given seed
+    never change. `max_samples` then subsamples train and val proportionally from their own
+    pools; the test split is left out of every subsample, so a quick subset run can never
+    train or tune on a sealed test image."""
     labels = np.asarray(labels)
     rng = np.random.default_rng(seed)
     train, val, test = [], [], []
@@ -97,13 +102,24 @@ def stratified_split(labels, val_frac=0.1, test_frac=0.1, max_samples=None, seed
     per_class_cap = None if not max_samples else max(3, max_samples // len(classes))
     for c in classes:
         idx = rng.permutation(np.flatnonzero(labels == c))
-        if per_class_cap:
-            idx = idx[:per_class_cap]
         n_val, n_test = max(1, int(len(idx) * val_frac)), max(1, int(len(idx) * test_frac))
-        test.extend(idx[:n_test])
-        val.extend(idx[n_test:n_test + n_val])
-        train.extend(idx[n_test + n_val:])
+        c_test, c_val, c_train = idx[:n_test], idx[n_test:n_test + n_val], idx[n_test + n_val:]
+        if per_class_cap:
+            keep_val = max(1, int(round(per_class_cap * val_frac)))
+            c_val, c_train = c_val[:keep_val], c_train[:max(1, per_class_cap - keep_val)]
+        test.extend(c_test)
+        val.extend(c_val)
+        train.extend(c_train)
     return [rng.permutation(np.array(s)) for s in (train, val, test)]
+
+
+def split_manifest(ids, test_idx) -> dict:
+    """Identity of the sealed test split: sorted file ids and their SHA-256, so a later
+    confirmation run can prove it evaluates exactly the images that were held out."""
+    import hashlib
+    files = sorted(str(ids[i]) for i in test_idx)
+    digest = hashlib.sha256("\n".join(files).encode()).hexdigest()
+    return {"count": len(files), "sha256": digest, "files": files}
 
 
 # -- LEVIR-CD ---------------------------------------------------------------------------------
@@ -167,11 +183,15 @@ def _grid_png(tiles: list, labels: list, cols: int, scale: int = 2) -> bytes:
     return buf.getvalue()
 
 
-def describe_classification(images, labels, splits: dict, source: str, out_dir: str = None, max_stats: int = 1500) -> dict:
-    """images: callable(i) -> HxWx3 uint8; labels: array of class indices."""
+def describe_classification(images, labels, splits: dict, source: str, out_dir: str = None, max_stats: int = 1500,
+                            pool=None) -> dict:
+    """images: callable(i) -> HxWx3 uint8; labels: array of class indices.
+    Pixel statistics are sampled from `pool` (the train+val indices) so sealed test images are never
+    opened; `splits` may still list the test indices, which are only counted."""
     labels = np.asarray(labels)
     rng = np.random.default_rng(0)
-    idx = rng.permutation(len(labels))[:max_stats]
+    pool = np.arange(len(labels)) if pool is None else np.asarray(pool)
+    idx = rng.permutation(pool)[:max_stats]
     sample = np.stack([images(i) for i in idx]).astype(np.float32) / 255.0      # N,H,W,3
     lab = labels[idx]
     mean, std = sample.mean(axis=(0, 1, 2)), sample.std(axis=(0, 1, 2))

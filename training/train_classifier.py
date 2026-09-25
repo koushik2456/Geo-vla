@@ -1,5 +1,5 @@
 """
-training/train_classifier.py — Fine-tune ResNet-50 on EuroSAT (RGB, 10 land-cover classes).
+training/train_classifier.py â€” Fine-tune ResNet-50 on EuroSAT (RGB, 10 land-cover classes).
 
     python -m training.train_classifier                               # full EuroSAT, 10 epochs (GPU)
     python -m training.train_classifier --max-samples 2000 --img-size 64 --epochs 5   # quick, CPU-friendly
@@ -33,7 +33,7 @@ from models import EUROSAT_CLASSES  # noqa: E402
 from models.classifier import SceneClassifier  # noqa: E402
 from training import analytics  # noqa: E402
 from training.common import Progress, build_with_pretrained_fallback, read_batches  # noqa: E402
-from training.datasets import describe_classification, download_eurosat, stratified_split  # noqa: E402
+from training.datasets import describe_classification, download_eurosat, split_manifest, stratified_split  # noqa: E402
 
 MEAN, STD = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
 
@@ -53,12 +53,13 @@ class ImageList(Dataset):
 
 
 def load_source(args, progress):
-    """Returns (load(i) -> HxWx3 uint8, labels array, source description)."""
+    """Returns (load(i) -> HxWx3 uint8, labels array, source description, stable file ids)."""
     if args.dataset == "synthetic":
         from training.synthetic_data import SyntheticEuroSAT
         ds = SyntheticEuroSAT(per_class=args.samples_per_class, seed=args.seed)
         labels = np.array([i // ds.per_class for i in range(len(ds))])
-        return (lambda i: np.array(ds[i][0])), labels, "synthetic EuroSAT-like patches"
+        ids = [f"synthetic/{i:05d}" for i in range(len(ds))]
+        return (lambda i: np.array(ds[i][0])), labels, "synthetic EuroSAT-like patches", ids
     root = args.image_folder or download_eurosat(log=lambda m: progress.emit("info", message=m))
     files, labels = [], []
     for c, name in enumerate(EUROSAT_CLASSES):
@@ -69,7 +70,8 @@ def load_source(args, progress):
             if f.lower().endswith((".jpg", ".jpeg", ".png", ".tif")):
                 files.append(os.path.join(folder, f))
                 labels.append(c)
-    return (lambda i: np.array(Image.open(files[i]).convert("RGB"))), np.array(labels), f"EuroSAT RGB ({root})"
+    ids = [os.path.relpath(f, root).replace(os.sep, "/") for f in files]
+    return (lambda i: np.array(Image.open(files[i]).convert("RGB"))), np.array(labels), f"EuroSAT RGB ({root})", ids
 
 
 def transforms_for(size: int):
@@ -132,7 +134,8 @@ def main():
     p.add_argument("--img-size", type=int, default=224, help="224 = ImageNet size; 64 = EuroSAT native (fast on CPU)")
     p.add_argument("--max-samples", type=int, default=0, help="Stratified subsample of the dataset (0 = all)")
     p.add_argument("--samples-per-class", type=int, default=300, help="Synthetic dataset size")
-    p.add_argument("--workers", type=int, default=2)
+    p.add_argument("--workers", type=int, default=0 if os.name == "nt" else 2,  # Windows workers cannot pickle the loaders
+                   help="DataLoader worker processes")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-pretrained", action="store_true", help="Random initialisation instead of ImageNet")
     p.add_argument("--progress-file", default=None, help="JSON-lines progress for the training studio")
@@ -152,18 +155,23 @@ def run(args, progress):
     an_dir = os.path.join(os.path.dirname(os.path.abspath(args.out)), "analytics")
     os.makedirs(an_dir, exist_ok=True)
 
-    # 1. Data
-    load, labels, source = load_source(args, progress)
+    # 1. Data. The test split is sealed: identified by a manifest + hash but never loaded here.
+    load, labels, source, ids = load_source(args, progress)
     train_idx, val_idx, test_idx = stratified_split(labels, max_samples=args.max_samples or None, seed=args.seed)
-    progress.emit("info", message=f"Dataset: {source}; {len(train_idx)} train / {len(val_idx)} val / {len(test_idx)} test")
-    stats = describe_classification(load, labels, {"train": train_idx, "val": val_idx, "test": test_idx}, source, an_dir)
+    manifest = split_manifest(ids, test_idx)
+    analytics.write_json(an_dir, "test_split.json", {**manifest, "seed": args.seed, "dataset": args.dataset,
+                                                     "note": "sealed: evaluate only via training.confirm"})
+    progress.emit("info", message=f"Dataset: {source}; {len(train_idx)} train / {len(val_idx)} val / "
+                                  f"{len(test_idx)} test (sealed, sha256 {manifest['sha256'][:12]})")
+    stats = describe_classification(load, labels, {"train": train_idx, "val": val_idx, "test": test_idx}, source,
+                                    an_dir, pool=np.concatenate([train_idx, val_idx]))
     analytics.write_json(an_dir, "dataset.json", stats)
     progress.emit("dataset", **{k: stats[k] for k in ("total", "split_sizes", "channel_mean", "channel_std")})
 
     train_tf, eval_tf = transforms_for(args.img_size)
     mk = lambda idx, tf, shuffle: DataLoader(ImageList(load, labels, idx, tf), batch_size=args.batch_size,  # noqa: E731
                                              shuffle=shuffle, num_workers=args.workers, pin_memory=device.type == "cuda")
-    train_dl, val_dl, test_dl = mk(train_idx, train_tf, True), mk(val_idx, eval_tf, False), mk(test_idx, eval_tf, False)
+    train_dl, val_dl = mk(train_idx, train_tf, True), mk(val_idx, eval_tf, False)
 
     # 2. Model
     model, pretrained = build_with_pretrained_fallback(
@@ -174,9 +182,9 @@ def run(args, progress):
         model, (torch.zeros(1, 3, args.img_size, args.img_size, device=device),),
         [(n, getattr(net, n)) for n in ("conv1", "bn1", "relu", "maxpool", "layer1", "layer2", "layer3", "layer4", "avgpool", "fc")],
         "ResNet-50 scene classifier")
-    arch["notes"] = {"stem": "7×7 conv, stride 2 → batch norm → ReLU → 3×3 max-pool",
-                     "stages": "4 stages of bottleneck blocks (1×1 → 3×3 → 1×1 conv + skip connection): 3, 4, 6, 3 blocks",
-                     "head": f"global average pooling → fully connected 2048 → {len(EUROSAT_CLASSES)} classes (softmax)",
+    arch["notes"] = {"stem": "7Ã—7 conv, stride 2 â†’ batch norm â†’ ReLU â†’ 3Ã—3 max-pool",
+                     "stages": "4 stages of bottleneck blocks (1Ã—1 â†’ 3Ã—3 â†’ 1Ã—1 conv + skip connection): 3, 4, 6, 3 blocks",
+                     "head": f"global average pooling â†’ fully connected 2048 â†’ {len(EUROSAT_CLASSES)} classes (softmax)",
                      "initialisation": "ImageNet" if pretrained else "random"}
     analytics.write_json(an_dir, "architecture.json", arch)
 
@@ -186,10 +194,10 @@ def run(args, progress):
     scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
     hyper = {"optimizer": "AdamW", "weight_decay": 1e-4, "max_lr": args.lr, "schedule": "one-cycle (cosine)",
              "loss": "cross-entropy, label smoothing 0.05", "batch_size": args.batch_size, "epochs": args.epochs,
-             "img_size": args.img_size, "augmentation": "flips, 90° rotation, colour jitter",
+             "img_size": args.img_size, "augmentation": "flips, 90Â° rotation, colour jitter",
              "mixed_precision": device.type == "cuda"}
     progress.emit("start", model="classifier", dataset=args.dataset, epochs=args.epochs, steps_per_epoch=len(train_dl),
-                  train_size=len(train_idx), val_size=len(val_idx), test_size=len(test_idx), device=str(device),
+                  train_size=len(train_idx), val_size=len(val_idx), test_size=len(test_idx), test_sealed=True, device=str(device),
                   pretrained=pretrained, params=arch["total_params"], hyperparameters=hyper)
 
     # 3. Train
@@ -225,19 +233,20 @@ def run(args, progress):
             best_acc = val["acc"]
             torch.save(model.state_dict(), args.out)
 
-    # 4. Evaluate the best checkpoint and explain it
-    progress.emit("info", message="Evaluating the best checkpoint on the test set and generating analytics")
+    # 4. Evaluate the best checkpoint on the VALIDATION split and explain it (the test split stays sealed)
+    progress.emit("info", message="Evaluating the best checkpoint on the validation set and generating analytics")
     model.load_state_dict(torch.load(args.out, map_location=device))
-    test = evaluate(model, test_dl, device, criterion, collect=True)
-    report = analytics.classification_report(test["true"], test["pred"], EUROSAT_CLASSES)
-    report["embedding"] = analytics.pca_2d(test["features"], test["true"])
-    report["test_loss"] = test["loss"]
+    ev = evaluate(model, val_dl, device, criterion, collect=True)
+    report = analytics.classification_report(ev["true"], ev["pred"], EUROSAT_CLASSES)
+    report["embedding"] = analytics.pca_2d(ev["features"], ev["true"])
+    report["split"] = "val"
+    report["val_loss"] = ev["loss"]
     analytics.write_json(an_dir, "evaluation.json", report)
     analytics.confusion_png(report, os.path.join(an_dir, "confusion_matrix.png"))
     analytics.filters_png(net.conv1.weight, os.path.join(an_dir, "filters.png"),
-                          "The 64 learned 7×7 kernels of the first convolution")
+                          "The 64 learned 7x7 kernels of the first convolution")
 
-    sample = load(test_idx[0])
+    sample = load(val_idx[0])
     captured = {}
     h = net.layer1.register_forward_hook(lambda m, i, o: captured.__setitem__("a", o[0]))
     model.eval()
@@ -246,23 +255,25 @@ def run(args, progress):
     h.remove()
     analytics.feature_maps_png(sample, captured["a"], os.path.join(an_dir, "feature_maps.png"), "layer1")
 
-    wrong = np.flatnonzero(test["pred"] != test["true"])[:8]
-    right = np.flatnonzero(test["pred"] == test["true"])
+    wrong = np.flatnonzero(ev["pred"] != ev["true"])[:8]
+    right = np.flatnonzero(ev["pred"] == ev["true"])
     order = np.concatenate([wrong, right])[:16]
-    analytics.predictions_png([load(test_idx[k]) for k in order], test["true"][order], test["pred"][order],
-                              test["conf"][order], EUROSAT_CLASSES, os.path.join(an_dir, "predictions.png"))
+    analytics.predictions_png([load(val_idx[k]) for k in order], ev["true"][order], ev["pred"][order],
+                              ev["conf"][order], EUROSAT_CLASSES, os.path.join(an_dir, "predictions.png"))
     analytics.curves_png(history, read_batches(args.progress_file), os.path.join(an_dir, "training_curves.png"),
                          "val_acc", "validation accuracy")
 
     metrics = {"dataset": source if args.dataset == "eurosat" else "synthetic EuroSAT-like",
-               "best_val_acc": best_acc, "test_acc": report["accuracy"], "macro_f1": report["macro_f1"],
-               "per_class_test_acc": {c: v["recall"] for c, v in report["per_class"].items()},
+               "evaluation_split": "val", "best_val_acc": best_acc, "val_acc": report["accuracy"],
+               "val_macro_f1": report["macro_f1"],
+               "per_class_val_recall": {c: v["recall"] for c, v in report["per_class"].items()},
+               "test_split": {k: manifest[k] for k in ("count", "sha256")},
                "pretrained": pretrained, "params": arch["total_params"], "hyperparameters": hyper,
                "history": history, "args": vars(args)}
     with open(args.out.replace(".pth", ".metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
-    progress.emit("done", checkpoint=args.out, test_acc=report["accuracy"], macro_f1=report["macro_f1"],
-                  best_val_acc=best_acc, per_class=metrics["per_class_test_acc"])
+    progress.emit("done", checkpoint=args.out, val_acc=report["accuracy"], val_macro_f1=report["macro_f1"],
+                  best_val_acc=best_acc, per_class=metrics["per_class_val_recall"])
 
 
 if __name__ == "__main__":

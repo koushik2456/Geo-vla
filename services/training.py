@@ -26,10 +26,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MODELS = {
     "classifier": {"title": "Land-cover classifier (ResNet-50)", "script": "training.train_classifier",
-                   "checkpoint": geotools.CHECKPOINT_FILES["classifier"], "score": ("test_acc", "Test accuracy"),
+                   "checkpoint": geotools.CHECKPOINT_FILES["classifier"], "score": ("val_acc", "Validation accuracy"),
                    "datasets": ["eurosat", "synthetic"]},
     "change_detector": {"title": "Change detector (Siamese U-Net)", "script": "training.train_change_detector",
-                        "checkpoint": geotools.CHECKPOINT_FILES["change"], "score": ("test_f1", "Test F1"),
+                        "checkpoint": geotools.CHECKPOINT_FILES["change"], "score": ("val_f1", "Validation F1"),
                         "datasets": ["levir", "synthetic"]},
 }
 _GEOTOOLS_KEY = {"classifier": "classifier", "change_detector": "change"}
@@ -112,7 +112,8 @@ def explore_dataset(dataset_id: str, refresh: bool = False) -> dict:
             labels = np.array(lab)
             load, source = (lambda i: np.array(Image.open(files[i]).convert("RGB"))), "EuroSAT RGB"
         tr, va, te = ds.stratified_split(labels)
-        stats = ds.describe_classification(load, labels, {"train": tr, "val": va, "test": te}, source, out)
+        stats = ds.describe_classification(load, labels, {"train": tr, "val": va, "test": te}, source, out,
+                                           pool=np.concatenate([tr, va]))  # never open sealed test images
     elif dataset_id in ("synthetic_change", "levir"):
         if dataset_id == "levir":
             if not ds.levir_ready():
@@ -350,12 +351,24 @@ def recover_after_restart() -> None:
 # -- model registry ----------------------------------------------------------------------------------------
 
 def _flat_metrics(model: str, metrics: dict) -> dict:
+    """Headline numbers for the registry. Scores come from the validation split; test_* keys are
+    only present for checkpoints trained elsewhere that report them, or after training.confirm."""
+    split = metrics.get("test_split") or {}
+    common = {"evaluation_split": metrics.get("evaluation_split", "test" if "test" in metrics or "test_acc" in metrics else None),
+              "test_split_sha256": split.get("sha256")}
     if model == "classifier":
-        return {"test_acc": metrics.get("test_acc"), "best_val_acc": metrics.get("best_val_acc"),
-                "per_class": metrics.get("per_class_test_acc")}
-    test = metrics.get("test", {})
-    return {"test_f1": test.get("f1"), "test_iou": test.get("iou"), "test_precision": test.get("precision"),
-            "test_recall": test.get("recall"), "best_val_f1": metrics.get("best_val_f1")}
+        out = {"val_acc": metrics.get("val_acc", metrics.get("best_val_acc")), "val_macro_f1": metrics.get("val_macro_f1"),
+               "best_val_acc": metrics.get("best_val_acc"),
+               "per_class": metrics.get("per_class_val_recall") or metrics.get("per_class_test_acc")}
+        if "test_acc" in metrics:
+            out["test_acc"] = metrics["test_acc"]
+        return {**common, **out}
+    val, test = metrics.get("val", {}), metrics.get("test", {})
+    out = {"val_f1": val.get("f1", metrics.get("best_val_f1")), "val_iou": val.get("iou"),
+           "val_precision": val.get("precision"), "val_recall": val.get("recall"), "best_val_f1": metrics.get("best_val_f1")}
+    if test:
+        out.update({"test_f1": test.get("f1"), "test_iou": test.get("iou")})
+    return {**common, **out}
 
 
 def _load_state_dict(model: str, path: str):

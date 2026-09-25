@@ -320,7 +320,11 @@ function JobDetail({ id, onFinished }) {
         {job.history.length > 0 && (
           <Stat label={isCls ? "Best val accuracy" : "Best val F1"} value={pct(Math.max(...job.history.map((h) => (isCls ? h.val_acc : h.val_f1))))} />
         )}
-        {job.result && <Stat label={isCls ? "Test accuracy" : "Test F1"} value={pct(isCls ? job.result.test_acc : job.result.test.f1)} />}
+        {job.result && (
+          <Stat label={isCls ? "Val accuracy (best ckpt)" : "Val F1 (best ckpt)"}
+            value={pct(isCls ? job.result.val_acc ?? job.result.test_acc : (job.result.val ?? job.result.test)?.f1)}
+            note="test split sealed" />
+        )}
       </div>
       {job.warnings.map((w) => <div key={w} className="warn small">{w}</div>)}
       {job.error && <div className="error">{job.error}</div>}

@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.change_detector import SiameseChangeDetector  # noqa: E402
 from training import analytics  # noqa: E402
 from training.common import Progress, build_with_pretrained_fallback, read_batches  # noqa: E402
-from training.datasets import LEVIR_DIR, describe_change, levir_ready  # noqa: E402
+from training.datasets import split_manifest, LEVIR_DIR, describe_change, levir_ready  # noqa: E402
 
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -138,7 +138,8 @@ def main():
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--max-samples", type=int, default=0, help="Use at most this many training patches (0 = all)")
     p.add_argument("--synthetic-pairs", type=int, default=400, help="Synthetic training pairs")
-    p.add_argument("--workers", type=int, default=2)
+    p.add_argument("--workers", type=int, default=0 if os.name == "nt" else 2,  # Windows workers cannot pickle the loaders
+                   help="DataLoader worker processes")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-pretrained", action="store_true", help="Random initialisation instead of ImageNet")
     p.add_argument("--progress-file", default=None, help="JSON-lines progress for the training studio")
@@ -164,29 +165,37 @@ def run(args, progress):
         n = args.synthetic_pairs
         train_ds = SyntheticChangePairs(n, seed=args.seed, augment=True)
         val_ds = SyntheticChangePairs(max(n // 8, 8), seed=args.seed + 1)
-        test_ds = SyntheticChangePairs(max(n // 8, 8), seed=args.seed + 2)
+        n_test = max(n // 8, 8)
+        test_ids = [f"synthetic/{args.seed + 2}/{i:05d}" for i in range(n_test)]
         source = "synthetic change pairs"
     else:
         if not levir_ready(args.data_dir):
             raise SystemExit("LEVIR-CD not found — run: python -m training.download_data levir --from /path/to/LEVIR-CD.zip")
         train_ds = LevirCDPatches(args.data_dir, "train", augment=True)
-        val_ds, test_ds = LevirCDPatches(args.data_dir, "val"), LevirCDPatches(args.data_dir, "test")
+        val_ds = LevirCDPatches(args.data_dir, "val")
+        # The official LEVIR-CD test split is sealed: listed for its manifest, never loaded here.
+        test_dir = os.path.join(args.data_dir, "test", "label")
+        test_ids = sorted(f"test/{f}" for f in os.listdir(test_dir))
+        n_test = len(test_ids)
         source = f"LEVIR-CD ({args.data_dir})"
     base_train = train_ds
     if args.max_samples and len(train_ds) > args.max_samples:
         rng = np.random.default_rng(args.seed)
         train_ds = Subset(train_ds, rng.permutation(len(train_ds))[:args.max_samples].tolist())
         val_ds = Subset(val_ds, rng.permutation(len(val_ds))[:max(args.max_samples // 8, 8)].tolist())
-        test_ds = Subset(test_ds, rng.permutation(len(test_ds))[:max(args.max_samples // 8, 8)].tolist())
+    manifest = split_manifest(test_ids, range(len(test_ids)))
+    analytics.write_json(an_dir, "test_split.json", {**manifest, "seed": args.seed, "dataset": args.dataset,
+                                                     "note": "sealed: evaluate only via training.confirm"})
     raw = base_train.raw
-    stats = describe_change(raw, len(base_train), {"train": len(train_ds), "val": len(val_ds), "test": len(test_ds)},
+    stats = describe_change(raw, len(base_train), {"train": len(train_ds), "val": len(val_ds), "test": n_test},
                             source, an_dir)
     analytics.write_json(an_dir, "dataset.json", stats)
-    progress.emit("info", message=f"Dataset: {source}; {len(train_ds)} train / {len(val_ds)} val / {len(test_ds)} test pairs")
+    progress.emit("info", message=f"Dataset: {source}; {len(train_ds)} train / {len(val_ds)} val / {n_test} test "
+                                  f"(sealed, sha256 {manifest['sha256'][:12]})")
 
     loader = lambda ds, shuffle: DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle,  # noqa: E731
                                             num_workers=args.workers, pin_memory=device.type == "cuda")
-    train_dl, val_dl, test_dl = loader(train_ds, True), loader(val_ds, False), loader(test_ds, False)
+    train_dl, val_dl = loader(train_ds, True), loader(val_ds, False)
 
     # 2. Model
     model, pretrained = build_with_pretrained_fallback(
@@ -212,7 +221,7 @@ def run(args, progress):
              "epochs": args.epochs, "patch": "256×256", "augmentation": "flips, 90° rotations, temporal swap"}
     progress.emit("start", model="change_detector", dataset=args.dataset, epochs=args.epochs,
                   steps_per_epoch=len(train_dl), train_size=len(train_ds), val_size=len(val_ds),
-                  test_size=len(test_ds), device=str(device), pretrained=pretrained,
+                  test_size=n_test, test_sealed=True, device=str(device), pretrained=pretrained,
                   params=arch["total_params"], hyperparameters=hyper)
 
     # 3. Train
@@ -242,18 +251,18 @@ def run(args, progress):
             best_f1 = val["f1"]
             torch.save(model.state_dict(), args.out)
 
-    # 4. Evaluate + explain
-    progress.emit("info", message="Evaluating the best checkpoint on the test set and generating analytics")
+    # 4. Evaluate on the VALIDATION split + explain (the test split stays sealed)
+    progress.emit("info", message="Evaluating the best checkpoint on the validation set and generating analytics")
     model.load_state_dict(torch.load(args.out, map_location=device))
-    test = evaluate(model, test_dl, device, keep_probs=True)
-    sweep = analytics.threshold_sweep(test.pop("probs"), test.pop("labels"))
-    evaluation = {**{k: v for k, v in test.items()}, "threshold_sweep": sweep,
+    ev = evaluate(model, val_dl, device, keep_probs=True)
+    sweep = analytics.threshold_sweep(ev.pop("probs"), ev.pop("labels"))
+    evaluation = {**{k: v for k, v in ev.items()}, "split": "val", "threshold_sweep": sweep,
                   "best_threshold": max(sweep, key=lambda r: r["f1"])}
     analytics.write_json(an_dir, "evaluation.json", evaluation)
     analytics.filters_png(enc.conv1.weight, os.path.join(an_dir, "filters.png"),
                           "The 64 learned 7×7 kernels of the shared encoder's first convolution")
 
-    base_test = test_ds.dataset if isinstance(test_ds, Subset) else test_ds
+    base_test = val_ds.dataset if isinstance(val_ds, Subset) else val_ds
     samples = []
     model.eval()
     with torch.no_grad():
@@ -273,12 +282,14 @@ def run(args, progress):
                          "val_f1", "validation F1")
 
     metrics = {"dataset": "LEVIR-CD (256px patches)" if args.dataset == "levir" else "synthetic change pairs",
-               "best_val_f1": best_f1, "test": {k: v for k, v in test.items() if k != "confusion"},
+               "evaluation_split": "val", "best_val_f1": best_f1,
+               "val": {k: v for k, v in ev.items() if k != "confusion"},
+               "test_split": {k: manifest[k] for k in ("count", "sha256")},
                "pretrained": pretrained, "params": arch["total_params"], "hyperparameters": hyper,
                "history": history, "args": vars(args)}
     with open(args.out.replace(".pth", ".metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
-    progress.emit("done", checkpoint=args.out, test=metrics["test"], best_val_f1=best_f1)
+    progress.emit("done", checkpoint=args.out, val=metrics["val"], best_val_f1=best_f1)
 
 
 if __name__ == "__main__":

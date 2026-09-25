@@ -1,0 +1,2 @@
+﻿# Frozen pre-registrations and confirmation records are hashed byte-for-byte: never convert line endings
+eval/confirmation/** -text

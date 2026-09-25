@@ -50,12 +50,13 @@ def test_train_promote_and_hot_reload(admin):
     assert job["status"] == "done", (job.get("error"), job.get("log"))
     assert job["version"] == "v1" and job["progress"]["fraction"] == 1.0
     assert job["history"] and "val_f1" in job["history"][0]
-    assert job["result"]["test"]["f1"] >= 0
+    assert job["result"]["val"]["f1"] >= 0 and "test" not in job["result"]  # test split stays sealed
 
     # Full neural-network analytics are recorded with the job
     a = job["analytics"]
     assert a["architecture"]["total_params"] > 1e6 and a["architecture"]["layers"][0]["output_shape"]
     assert a["dataset"]["task"] == "binary change detection" and a["evaluation"]["threshold_sweep"]
+    assert a["evaluation"]["split"] == "val"
     assert {"filters.png", "predictions.png", "training_curves.png", "dataset_samples.png"} <= set(a["images"])
     assert job["hyperparameters"]["loss"].startswith("weighted BCE")
     assert job["batches"] and "grad_norm" in job["batches"][0]
@@ -65,7 +66,8 @@ def test_train_promote_and_hot_reload(admin):
     assert client.get("/models/change_detector/versions/v1/artifacts/evaluation.json", headers=admin).status_code == 200
 
     registry = client.get("/models", headers=admin).json()["change_detector"]
-    assert registry["versions"][0]["version"] == "v1" and registry["versions"][0]["metrics"]["test_f1"] is not None
+    assert registry["versions"][0]["version"] == "v1" and registry["versions"][0]["metrics"]["val_f1"] is not None
+    assert "test_f1" not in registry["versions"][0]["metrics"] and registry["score"]["key"] == "val_f1"
 
     ws = geotools.Workspace(BBOX)
     for d in ("2019-07-01", "2025-07-01"):
@@ -120,3 +122,62 @@ def test_stratified_split_keeps_every_class():
     for part in (tr, va, te):
         assert set(labels[part]) == set(range(10))
     assert not (set(tr) & set(va)) and not (set(va) & set(te))
+
+
+def test_subset_runs_never_touch_the_sealed_test_split():
+    from training.datasets import split_manifest, stratified_split
+    labels = np.repeat(np.arange(10), 300)
+    _, _, full_test = stratified_split(labels)
+    for cap in (None, 3000, 1000, 200, 30):
+        tr, va, te = stratified_split(labels, max_samples=cap)
+        assert set(te) == set(full_test), cap                      # identical test split for every subset size
+        assert not (set(tr) | set(va)) & set(full_test), cap         # train/val never draw from it
+        assert not set(tr) & set(va)
+    ids = [f"f{i}" for i in range(len(labels))]
+    assert split_manifest(ids, full_test)["sha256"] == split_manifest(ids, list(reversed(full_test)))["sha256"]
+
+
+def test_confirmation_gate_refuses_unless_frozen_approved_and_unspent(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import os
+
+    from training import confirm
+
+    monkeypatch.setattr(confirm, "CONF_DIR", str(tmp_path))
+    monkeypatch.setattr(confirm.config, "MODEL_REGISTRY_DIR", str(tmp_path / "registry"))
+    os.makedirs(tmp_path / "registry" / "classifier")
+    (tmp_path / "registry" / "classifier" / "v1.pth").write_bytes(b"weights")
+    split = {"count": 3, "sha256": "ab" * 32, "files": ["a", "b", "c"]}
+    monkeypatch.setattr(confirm, "eurosat_test_split",
+                        lambda spec: (["a", "b", "c"], np.array([0, 1, 2]), np.array([0, 1, 2]), split))
+    folder = tmp_path / "classifier-eurosat"
+    run = lambda: confirm.main(["--name", "classifier-eurosat", "--version", "v1"])  # noqa: E731
+
+    assert run() == 2                                   # no pre-registration
+    folder.mkdir()
+    spec = {"model": "classifier", "dataset": "eurosat", "split_seed": 42, "img_size": 224,
+            "test_split_sha256": split["sha256"], "pass_bars": {"accuracy": 0.9, "macro_f1": 0.9, "min_class_recall": 0.5}}
+    prereg = folder / "PREREG.md"
+    prereg.write_text("# PREREG\n```json prereg\n" + json.dumps(spec) + "\n```\n", encoding="utf-8")
+    (folder / "PREREG.md.sha256").write_text("0" * 64)
+    assert run() == 2                                   # hash mismatch: edited after freezing
+    frozen = hashlib.sha256(prereg.read_bytes()).hexdigest()
+    (folder / "PREREG.md.sha256").write_text(frozen)
+    assert run() == 2                                   # no approval
+    ckpt = hashlib.sha256(b"weights").hexdigest()
+    (folder / "APPROVAL.md").write_text(f"Approved. PREREG {frozen}\ncheckpoint {ckpt}\n", encoding="utf-8")
+    assert run() == 2                                   # approval does not quote the split hash
+    (folder / "APPROVAL.md").write_text(f"Approved. PREREG {frozen}\ncheckpoint {ckpt}\nsplit {split['sha256']}\n",
+                                        encoding="utf-8")
+    assert confirm.main(["--name", "classifier-eurosat", "--version", "v1", "--check"]) == 0
+    assert not (folder / "SPENT.json").exists()        # --check never evaluates or spends
+
+    report = {"accuracy": 0.95, "macro_f1": 0.94,
+              "per_class": {"A": {"recall": 0.8, "support": 1}, "B": {"recall": 0.4, "support": 1}}}
+    monkeypatch.setattr(confirm, "evaluate", lambda facts: report)
+    assert run() == 0
+    result = json.loads((folder / "results.json").read_text())
+    assert result["decision"]["min_class_recall"] == {"value": 0.4, "threshold": 0.5, "passed": False}
+    assert result["passed_all"] is False and (folder / "SPENT.json").exists()
+    assert run() == 2                                   # spent: never a second confirmation
