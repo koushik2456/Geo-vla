@@ -40,11 +40,11 @@ const DEEP_SEA = Color.fromCssColorString("#0a1a2f");
 export const google3dAvailable = (cfg) => !!(cfg?.google_maps_key || cfg?.cesium_ion_token);
 
 export const BASEMAPS = [
-  { id: "google3d", label: "Google 3D", hint: "Google Photorealistic 3D Tiles: 3D cities, terrain and landmarks" },
-  { id: "hybrid", label: "Satellite + labels", hint: "Esri World Imagery with places, borders and roads" },
-  { id: "satellite", label: "Satellite", hint: "Esri World Imagery (Maxar, Airbus)" },
+  { id: "google3d", label: "Google 3D", hint: "Photorealistic 3D tiles" },
+  { id: "hybrid", label: "Satellite + labels", hint: "Imagery with places and roads" },
+  { id: "satellite", label: "Satellite", hint: "Esri World Imagery" },
   { id: "streets", label: "Streets", hint: "OpenStreetMap" },
-  { id: "dark", label: "Dark", hint: "CARTO dark matter" },
+  { id: "dark", label: "Dark", hint: "CARTO Dark Matter" },
 ];
 
 const esri = (service, credit) =>

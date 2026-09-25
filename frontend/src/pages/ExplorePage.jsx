@@ -11,6 +11,7 @@ import {
   ScreenSpaceEventType,
   VerticalOrigin,
 } from "cesium";
+import { BrainCircuit, MapPin } from "lucide-react";
 import { api } from "../api.js";
 import { navigate } from "../router.js";
 import PlaceSearch from "../components/PlaceSearch.jsx";
@@ -31,11 +32,12 @@ import {
 
 const monthAgo = () => new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
 const pct = (p) => `${(p * 100).toFixed(p >= 0.995 || p < 0.001 ? 0 : 1)}%`;
+const ICO = { size: 14, strokeWidth: 1.75 };
 
 function labelFor(text) {
   return {
     text,
-    font: "600 13px Inter, system-ui, sans-serif",
+    font: "600 13px IBM Plex Sans, system-ui, sans-serif",
     fillColor: Color.WHITE,
     outlineColor: Color.BLACK,
     outlineWidth: 3,
@@ -43,7 +45,7 @@ function labelFor(text) {
     verticalOrigin: VerticalOrigin.BOTTOM,
     pixelOffset: new Cartesian2(0, -16),
     showBackground: true,
-    backgroundColor: Color.fromCssColorString("#0b1020").withAlpha(0.78),
+    backgroundColor: Color.fromCssColorString("#151617").withAlpha(0.92),
     heightReference: HeightReference.CLAMP_TO_GROUND,
     disableDepthTestDistance: Number.POSITIVE_INFINITY,
   };
@@ -88,17 +90,17 @@ function addGrid(viewer, grid) {
 
 // -- panels --------------------------------------------------------------------------------
 
-function PlaceCard({ info, point, onAnalyze }) {
+function LocationSection({ info, point, onAnalyze }) {
   if (!point) return null;
   const { lon, lat } = point;
   const place = info?.place;
   const comps = place?.components ?? {};
   const copy = () => navigator.clipboard?.writeText(`${lat.toFixed(6)}, ${lon.toFixed(6)}`);
   return (
-    <section className="xp-card">
-      <div className="xp-eyebrow">Location</div>
+    <section className="xp-section">
+      <div className="section-title">Location</div>
       <h3>{place ? place.name : "Looking up…"}</h3>
-      {place && <p className="small">{place.formatted_address}</p>}
+      {place && <p className="small muted">{place.formatted_address}</p>}
       {place && (
         <div className="xp-chips">
           {["suburb", "locality", "subdistrict", "district", "state", "country", "postcode"]
@@ -106,25 +108,50 @@ function PlaceCard({ info, point, onAnalyze }) {
             .map((k) => <span key={k} className="chip" title={k}>{comps[k]}</span>)}
         </div>
       )}
-      <dl className="xp-facts">
+      <dl className="kv">
         <dt>Coordinates</dt>
-        <dd className="mono">{lat.toFixed(6)}, {lon.toFixed(6)} <button className="link" onClick={copy}>copy</button></dd>
+        <dd>{lat.toFixed(6)}, {lon.toFixed(6)} <button className="link" onClick={copy}>copy</button></dd>
         <dt>DMS</dt>
-        <dd className="mono">{fmtLatLon(lat, lon)}</dd>
-        {info?.utm && (<><dt>UTM</dt><dd className="mono">zone {info.utm.zone} · EPSG:{info.utm.epsg}</dd></>)}
-        {place?.plus_code && (<><dt>Plus code</dt><dd className="mono">{place.plus_code}</dd></>)}
-        <dt>Elevation</dt>
-        <dd>
-          {info?.elevation?.m != null ? `${fmtDistance(info.elevation.m)} a.s.l.` : info ? "unavailable" : "…"}
-          {info?.elevation?.local_min_m != null && <span className="muted small"> · 600 m window {Math.round(info.elevation.local_min_m)}–{Math.round(info.elevation.local_max_m)} m</span>}
-        </dd>
-        {place && (<><dt>Source</dt><dd className="small muted">{place.source}{info?.elevation?.source ? ` · ${info.elevation.source}` : ""}</dd></>)}
+        <dd>{fmtLatLon(lat, lon)}</dd>
+        {info?.utm && (<><dt>UTM</dt><dd>zone {info.utm.zone} · EPSG:{info.utm.epsg}</dd></>)}
+        {place?.plus_code && (<><dt>Plus code</dt><dd>{place.plus_code}</dd></>)}
+        {place && (<><dt>Source</dt><dd className="small muted" style={{ fontFamily: "var(--font)" }}>{place.source}</dd></>)}
       </dl>
       <div className="xp-actions">
-        <a className="button ghost" href={googleMapsUrl(lat, lon)} target="_blank" rel="noreferrer">Google Maps ↗</a>
-        <a className="button ghost" href={googleEarthUrl(lat, lon)} target="_blank" rel="noreferrer">Google Earth ↗</a>
-        <button className="button" onClick={onAnalyze}>Analyze this area →</button>
+        <a className="button ghost" href={googleMapsUrl(lat, lon)} target="_blank" rel="noreferrer">Google Maps</a>
+        <a className="button ghost" href={googleEarthUrl(lat, lon)} target="_blank" rel="noreferrer">Google Earth</a>
+        <button className="button primary" onClick={onAnalyze}>Analyze this area</button>
       </div>
+    </section>
+  );
+}
+
+function ElevationSection({ info, point }) {
+  if (!point) return null;
+  const elev = info?.elevation;
+  return (
+    <section className="xp-section">
+      <div className="section-title">Elevation</div>
+      <dl className="kv">
+        <dt>Height</dt>
+        <dd>{elev?.m != null ? `${fmtDistance(elev.m)} a.s.l.` : info ? "unavailable" : "…"}</dd>
+        {elev?.local_min_m != null && (
+          <>
+            <dt>Local min</dt>
+            <dd>{Math.round(elev.local_min_m)} m</dd>
+            <dt>Local max</dt>
+            <dd>{Math.round(elev.local_max_m)} m</dd>
+            <dt>Window</dt>
+            <dd style={{ fontFamily: "var(--font)" }}>600 m</dd>
+          </>
+        )}
+        {elev?.source && (
+          <>
+            <dt>Source</dt>
+            <dd className="small muted" style={{ fontFamily: "var(--font)" }}>{elev.source}</dd>
+          </>
+        )}
+      </dl>
     </section>
   );
 }
@@ -154,21 +181,21 @@ function SpectralChart({ signature }) {
   );
 }
 
-function NeuralPanel({ result, busy, error, date, setDate, onRetry }) {
+function ModelOutputSection({ result, busy, error, date, setDate, onRetry }) {
   return (
-    <section className="xp-card xp-nn">
-      <div className="xp-eyebrow">Neural network · what the model sees here</div>
+    <section className="xp-section xp-nn">
+      <div className="section-title">Model output</div>
       <label className="xp-date small">
         Imagery around
         <input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} />
         {result && <button className="link" onClick={onRetry}>re-run</button>}
       </label>
-      {busy && <div className="xp-busy"><span className="spinner" aria-hidden="true" /> Fetching Sentinel-2 and running the network…</div>}
-      {error && <div className="error">⚠ {error}</div>}
+      {busy && <div className="xp-busy"><span className="spinner" aria-hidden="true" /> Fetching Sentinel-2…</div>}
+      {error && <div className="error">{error}</div>}
       {result && !busy && (
         <>
           <div className="xp-pred" style={{ "--c": result.prediction.color }}>
-            <span className="swatch" />
+            <span className="swatch" style={{ background: result.prediction.color }} />
             <div>
               <strong>{result.prediction.class}</strong>
               <span className="small muted">
@@ -176,13 +203,13 @@ function NeuralPanel({ result, busy, error, date, setDate, onRetry }) {
               </span>
             </div>
           </div>
-          <p className="small muted">{result.method} · {result.imagery} · {result.date}</p>
+          <p className="hint">{result.method} · {result.imagery} · {result.date}</p>
 
-          <h4>Class probabilities (softmax)</h4>
+          <div className="section-title">Class probabilities</div>
           <ul className="xp-bars">
             {result.prediction.top5.map((t) => (
               <li key={t.class}>
-                <span>{t.class}</span>
+                <span className="xp-bar-name">{t.class}</span>
                 <span className="bar"><i style={{ width: `${Math.max(t.p * 100, 1)}%`, background: t.color }} /></span>
                 <span className="mono">{pct(t.p)}</span>
               </li>
@@ -192,36 +219,35 @@ function NeuralPanel({ result, busy, error, date, setDate, onRetry }) {
           <div className="xp-images">
             <figure>
               <img src={result.context.image} alt="3×3 neighbourhood with predicted class outlines" />
-              <figcaption>3×3 neighbourhood · {(result.patch.size_m * 3 / 1000).toFixed(2)} km</figcaption>
+              <figcaption>3×3 · {(result.patch.size_m * 3 / 1000).toFixed(2)} km</figcaption>
             </figure>
             <figure>
               <img src={result.patch.image} alt="Centre patch fed to the network" className="pixelated" />
-              <figcaption>Input patch · {result.patch.size_px}×{result.patch.size_px} px = {result.patch.size_m} m</figcaption>
+              <figcaption>Patch · {result.patch.size_px}×{result.patch.size_px} px</figcaption>
             </figure>
             {result.network && (
               <figure>
                 <img src={result.network.gradcam} alt="Grad-CAM heatmap" />
-                <figcaption>Grad-CAM · where it looked</figcaption>
+                <figcaption>Grad-CAM</figcaption>
               </figure>
             )}
           </div>
 
-          <h4>Spectral signature (centre patch)</h4>
+          <div className="section-title">Spectral signature</div>
           <div className="xp-spec">
             <SpectralChart signature={result.spectral.signature} />
-            <dl>
-              <dt>NDVI</dt><dd className="mono">{result.spectral.ndvi}</dd>
-              <dt>NDWI</dt><dd className="mono">{result.spectral.ndwi}</dd>
-              <dt>Brightness</dt><dd className="mono">{result.spectral.brightness}</dd>
+            <dl className="kv">
+              <dt>NDVI</dt><dd>{result.spectral.ndvi}</dd>
+              <dt>NDWI</dt><dd>{result.spectral.ndwi}</dd>
+              <dt>Brightness</dt><dd>{result.spectral.brightness}</dd>
             </dl>
           </div>
 
           {result.network ? (
             <>
-              <h4>Inside ResNet-50: most active feature maps per stage</h4>
-              <p className="small muted">
-                Input tensor {result.network.input.tensor_shape.join("×")}, {result.network.input.normalisation}. Deeper stages have more,
-                smaller maps that respond to larger, more abstract patterns.
+              <div className="section-title">Feature maps</div>
+              <p className="hint">
+                Input {result.network.input.tensor_shape.join("×")}, {result.network.input.normalisation}.
               </p>
               {result.network.stages.map((s) => (
                 <div key={s.stage} className="xp-stage">
@@ -243,20 +269,19 @@ function NeuralPanel({ result, busy, error, date, setDate, onRetry }) {
                   </tbody>
                 </table>
                 <p className="small">
-                  Embedding: {result.network.embedding.dim}-d (global average pool), ‖z‖ = {result.network.embedding.l2_norm},{" "}
-                  {pct(result.network.embedding.active_fraction)} units active. Strongest units: {result.network.embedding.top_units.join(", ")}.
+                  Embedding: {result.network.embedding.dim}-d, ‖z‖ = {result.network.embedding.l2_norm},{" "}
+                  {pct(result.network.embedding.active_fraction)} active. Top: {result.network.embedding.top_units.join(", ")}.
                 </p>
               </details>
             </>
           ) : (
             <div className="info small">
-              No trained classifier is active, so these are rule-based spectral classes. Train one in the <a href="#/studio">Training studio</a>{" "}
-              (the 1-minute classroom preset is enough) to see Grad-CAM and the network's feature maps here.
+              No trained classifier active. Train one in the <a href="#/studio">Training studio</a> to see Grad-CAM and feature maps.
             </div>
           )}
         </>
       )}
-      {!result && !busy && !error && <p className="small muted">Click anywhere on the globe to classify the 640 m patch under the cursor.</p>}
+      {!result && !busy && !error && <p className="hint">Click the globe to classify the 640 m patch under the cursor.</p>}
     </section>
   );
 }
@@ -337,7 +362,7 @@ export default function ExplorePage({ setAoi, setPlace }) {
     setInfo(null);
     if (viewer) {
       if (entities.current.pin) viewer.entities.remove(entities.current.pin);
-      entities.current.pin = addPin(viewer, lon, lat, "#22d3ee");
+      entities.current.pin = addPin(viewer, lon, lat, "#4d8fea");
       if (fly || viewer.camera.positionCartographic.height > 60_000) flyToPoint(viewer, lon, lat, { range: 4200 });
     }
     api(`/explore/point?lon=${lon}&lat=${lat}`)
@@ -383,45 +408,52 @@ export default function ExplorePage({ setAoi, setPlace }) {
         </div>
         <div className="tabs" role="tablist">
           <button role="tab" aria-selected={mode === "nn"} className={mode === "nn" ? "active" : ""} onClick={() => setMode("nn")}>
-            🧠 Classify with the network
+            <BrainCircuit {...ICO} aria-hidden="true" /> Classify
           </button>
           <button role="tab" aria-selected={mode === "place"} className={mode === "place" ? "active" : ""} onClick={() => setMode("place")}>
-            📍 Place details only
+            <MapPin {...ICO} aria-hidden="true" /> Place
           </button>
         </div>
-        {!point && (
-          <div className="xp-card xp-welcome">
-            <div className="xp-eyebrow">Globe Explorer</div>
-            <h3>Fly anywhere, click to explore</h3>
-            <p className="small">
-              Search a place or click the globe. You get the exact address, coordinates, elevation and UTM zone. In <b>network</b> mode
-              Geo-VLA also fetches Sentinel-2 imagery there, classifies the 640 m patch with the ResNet-50 and shows what it looked at.
-            </p>
-            <p className="small muted">
-              Drag to pan · right-drag or scroll to zoom · Ctrl/middle-drag to tilt and rotate.
-              {cfg && !google3dAvailable(cfg) && " Add GOOGLE_MAPS_API_KEY to .env for Google Photorealistic 3D."}
-            </p>
-          </div>
-        )}
-        <PlaceCard info={info} point={point} onAnalyze={analyze} />
-        {mode === "nn" && point && (
-          <NeuralPanel {...nn} date={date} setDate={setDate} onRetry={() => classify(point.lon, point.lat)} />
-        )}
-        {history.length > 0 && (
-          <section className="xp-card">
-            <div className="xp-eyebrow">Explored patches <button className="link" onClick={clearHistory}>clear</button></div>
-            <ul className="xp-history">
-              {history.map((h, i) => (
-                <li key={`${h.lon}-${h.lat}-${i}`}>
-                  <button className="link" onClick={() => inspect(h.lon, h.lat, { fly: true })}>
-                    <span className="swatch" style={{ background: h.color }} /> {h.cls} <span className="muted">{pct(h.p)}</span>
-                    <span className="mono small muted"> {h.lat.toFixed(3)}, {h.lon.toFixed(3)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        <div className="xp-inspector">
+          {!point && (
+            <div className="xp-welcome">
+              <div className="section-title">Globe Explorer</div>
+              <h3>Click to identify</h3>
+              <p className="hint">
+                Search or click the globe for address, coordinates, elevation and UTM.
+                In classify mode the 640 m patch is run through ResNet-50.
+              </p>
+              <p className="hint">
+                Drag to pan · scroll to zoom · Ctrl/middle-drag to tilt.
+                {cfg && !google3dAvailable(cfg) && " Add GOOGLE_MAPS_API_KEY for Google 3D."}
+              </p>
+            </div>
+          )}
+          <LocationSection info={info} point={point} onAnalyze={analyze} />
+          <ElevationSection info={info} point={point} />
+          {mode === "nn" && point && (
+            <ModelOutputSection {...nn} date={date} setDate={setDate} onRetry={() => classify(point.lon, point.lat)} />
+          )}
+          {history.length > 0 && (
+            <section className="xp-section">
+              <div className="section-title row between">
+                <span>History</span>
+                <button className="link" onClick={clearHistory}>clear</button>
+              </div>
+              <ul className="xp-history">
+                {history.map((h, i) => (
+                  <li key={`${h.lon}-${h.lat}-${i}`}>
+                    <button className="link" onClick={() => inspect(h.lon, h.lat, { fly: true })}>
+                      <span className="swatch" style={{ background: h.color }} /> {h.cls}{" "}
+                      <span className="muted mono">{pct(h.p)}</span>
+                      <span className="mono small muted"> {h.lat.toFixed(3)}, {h.lon.toFixed(3)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
       </aside>
 
       <GlobeControls viewer={viewer} cfg={cfg} basemap={basemap} onBasemap={changeBasemap} camera={hud.camera} />

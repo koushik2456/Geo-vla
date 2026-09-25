@@ -406,7 +406,7 @@ export default function TerrainView({ run, share }) {
     <div className="map-wrap terrain3d">
       <div ref={mount} className="map t3-canvas" />
       <div className="t3-panel glass">
-        <div className="t3-modes" role="tablist" aria-label="3D render mode">
+        <div className="t3-modes segmented" role="tablist" aria-label="3D render mode">
           {MODES.map(([id, labelText]) => (
             <button key={id} role="tab" aria-selected={mode === id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}>
               {labelText}
@@ -448,7 +448,7 @@ export default function TerrainView({ run, share }) {
           )}
           <label><input type="checkbox" checked={autoRotate} onChange={(e) => setAutoRotate(e.target.checked)} /> Rotate</label>
         </div>
-        <button className="ghost" onClick={snapshot}>⤓ Snapshot PNG</button>
+        <button className="ghost" onClick={snapshot}>Snapshot PNG</button>
       </div>
       {model && (
         <div className="t3-legend glass">
@@ -458,7 +458,7 @@ export default function TerrainView({ run, share }) {
             <span>{Math.round(model.max)} m</span>
           </div>
           <div className="small muted">
-            Contours every {model.contour_interval} m · relief ×{exaggeration}
+            Contours {model.contour_interval} m · ×{exaggeration}
             {water.length > 0 && ` · water ${Math.round(water[0].level)} m`}
           </div>
         </div>
