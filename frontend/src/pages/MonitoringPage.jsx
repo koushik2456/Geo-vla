@@ -1,16 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Bell, Pause, Play, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api.js";
 import { navigate } from "../router.js";
 import { fmt } from "../layers.js";
 import PlaceSearch from "../components/PlaceSearch.jsx";
 import { ParamFields, defaultParams } from "../components/WorkflowPanel.jsx";
 
+const ICON = { size: 14, strokeWidth: 1.75 };
 const OPS = { gt: ">", ge: "≥", lt: "<", le: "≤" };
 const when = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "never");
 
 function Sparkline({ history, threshold }) {
   const vals = history.map((h) => h.value).filter((v) => v != null);
-  if (vals.length < 2) return <span className="muted small">{vals.length ? "1 check" : "no data yet"}</span>;
+  if (vals.length < 2) return <span className="muted small">{vals.length ? "1 check" : "no data"}</span>;
   const all = [...vals, threshold];
   const lo = Math.min(...all);
   const hi = Math.max(...all) || 1;
@@ -21,8 +23,8 @@ function Sparkline({ history, threshold }) {
   return (
     <svg className="sparkline" viewBox={`0 0 ${w} ${h}`} width={w} height={h} role="img" aria-label={`Trend of ${vals.length} checks`}>
       <line x1={0} x2={w} y1={y(threshold)} y2={y(threshold)} className="threshold" />
-      <polyline points={vals.map((v, i) => `${x(i)},${y(v)}`).join(" ")} fill="none" stroke="var(--series-1)" strokeWidth="2" />
-      <circle cx={x(vals.length - 1)} cy={y(vals.at(-1))} r="3" fill="var(--series-1)" />
+      <polyline points={vals.map((v, i) => `${x(i)},${y(v)}`).join(" ")} fill="none" stroke="var(--series-1)" strokeWidth="1.5" />
+      <circle cx={x(vals.length - 1)} cy={y(vals.at(-1))} r="2.5" fill="var(--series-1)" />
     </svg>
   );
 }
@@ -64,7 +66,7 @@ function CreateMonitor({ catalog, aoi, place, onCreated }) {
 
   return (
     <form className="card monitor-form" onSubmit={submit}>
-      <h2>Watch an area</h2>
+      <h2>New monitor</h2>
       <div className="field">
         <label htmlFor="m-name">Name</label>
         <input id="m-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required />
@@ -72,7 +74,7 @@ function CreateMonitor({ catalog, aoi, place, onCreated }) {
       <div className="field">
         <label>Area</label>
         <PlaceSearch onSelect={(r) => setArea({ bbox: r.analysis_bbox, place: r.label })} />
-        <small>{area.place || `Current map area [${area.bbox.map((v) => v.toFixed(2)).join(", ")}]`}</small>
+        <small>{area.place || `Map area [${area.bbox.map((v) => v.toFixed(2)).join(", ")}]`}</small>
       </div>
       <div className="field">
         <label htmlFor="m-wf">Workflow</label>
@@ -85,7 +87,7 @@ function CreateMonitor({ catalog, aoi, place, onCreated }) {
         </select>
       </div>
       <ParamFields wf={wf} values={params} onChange={setParams} relativeDates />
-      <small className="muted">Relative dates (e.g. -1y) move forward with every check.</small>
+      <p className="hint">Relative dates (e.g. -1y) advance with each check.</p>
       <div className="field">
         <label>Alert when</label>
         <div className="row">
@@ -108,12 +110,12 @@ function CreateMonitor({ catalog, aoi, place, onCreated }) {
           </select>
         </div>
         <div className="field grow">
-          <label htmlFor="m-mail">Email alerts to (optional)</label>
+          <label htmlFor="m-mail">Email (optional)</label>
           <input id="m-mail" type="email" value={f.notify_email} onChange={(e) => setF({ ...f, notify_email: e.target.value })} />
         </div>
       </div>
       {error && <div className="error">{error}</div>}
-      <button className="primary">Start monitoring</button>
+      <button className="primary"><Play {...ICON} /> Start monitoring</button>
     </form>
   );
 }
@@ -148,12 +150,14 @@ export default function MonitoringPage({ catalog, aoi, place, onAlertsChanged })
     <div className="page">
       <div className="page-head">
         <h1>Monitoring</h1>
-        <button className="primary" onClick={() => setCreating((c) => !c)}>{creating ? "Close" : "+ Watch an area"}</button>
+        <button className="primary" onClick={() => setCreating((c) => !c)}>
+          {creating ? <><X {...ICON} /> Close</> : <><Plus {...ICON} /> New monitor</>}
+        </button>
       </div>
       <div className="monitor-layout">
         <div className="grow">
           {creating && <CreateMonitor catalog={catalog} aoi={aoi} place={place} onCreated={() => { setCreating(false); load(); }} />}
-          {monitors.length === 0 && !creating && <div className="card muted">No watched areas yet. Watch an area to be alerted when forest loss, flooding, encroachment or crop stress crosses a threshold.</div>}
+          {monitors.length === 0 && !creating && <div className="card muted">No monitors.</div>}
           {monitors.map((m) => {
             const hit = m.last_value != null && { gt: m.last_value > m.rule.value, ge: m.last_value >= m.rule.value, lt: m.last_value < m.rule.value, le: m.last_value <= m.rule.value }[m.rule.op];
             return (
@@ -170,20 +174,29 @@ export default function MonitoringPage({ catalog, aoi, place, onAlertsChanged })
                 <div className="monitor-body">
                   <div>
                     <div className="small muted">Rule</div>
-                    <div>{m.rule.metric} {OPS[m.rule.op]} {m.rule.value}</div>
+                    <div className="mono">{m.rule.metric} {OPS[m.rule.op]} {m.rule.value}</div>
                   </div>
                   <div>
                     <div className="small muted">Latest</div>
-                    <div className="strong">{m.last_value != null ? fmt(m.last_value, 3) : "—"}</div>
+                    <div className="strong mono">{m.last_value != null ? fmt(m.last_value, 3) : "—"}</div>
                   </div>
                   <Sparkline history={m.history} threshold={m.rule.value} />
                   <div className="small muted">Last: {when(m.last_checked_at)}<br />Next: {m.active ? when(m.next_run_at) : "paused"}</div>
                 </div>
                 <div className="row">
                   <button onClick={() => act(() => api(`/monitors/${m.id}/check`, { method: "POST" }))}>Check now</button>
-                  <button onClick={() => act(() => api(`/monitors/${m.id}`, { method: "PATCH", body: { active: !m.active } }))}>{m.active ? "Pause" : "Resume"}</button>
+                  <button onClick={() => act(() => api(`/monitors/${m.id}`, { method: "PATCH", body: { active: !m.active } }))}>
+                    {m.active ? <><Pause {...ICON} /> Pause</> : <><Play {...ICON} /> Resume</>}
+                  </button>
                   {m.last_run_id && <button onClick={() => navigate(`/run/${m.last_run_id}`)}>Open latest</button>}
-                  <button className="link danger" onClick={() => window.confirm(`Stop watching "${m.name}"?`) && act(() => api(`/monitors/${m.id}`, { method: "DELETE" }))}>Delete</button>
+                  <button
+                    className="icon"
+                    title="Delete"
+                    aria-label={`Delete ${m.name}`}
+                    onClick={() => window.confirm(`Stop watching "${m.name}"?`) && act(() => api(`/monitors/${m.id}`, { method: "DELETE" }))}
+                  >
+                    <Trash2 {...ICON} />
+                  </button>
                 </div>
               </div>
             );
@@ -191,14 +204,14 @@ export default function MonitoringPage({ catalog, aoi, place, onAlertsChanged })
         </div>
         <aside className="card alerts-card">
           <div className="page-head">
-            <h2>Alerts {alerts.unread > 0 && <span className="badge">{alerts.unread} new</span>}</h2>
+            <h2><Bell {...ICON} /> Alerts {alerts.unread > 0 && <span className="badge">{alerts.unread}</span>}</h2>
             {alerts.unread > 0 && <button className="link" onClick={markRead}>Mark all read</button>}
           </div>
           {alerts.alerts.length === 0 && <p className="muted small">No alerts.</p>}
           <ul className="alert-list">
             {alerts.alerts.map((a) => (
               <li key={a.id} className={`${a.level} ${a.read ? "" : "unread"}`}>
-                <span className="alert-icon" aria-hidden="true">{a.level === "alert" ? "▲" : "!"}</span>
+                <span className="alert-icon" aria-hidden="true"><AlertTriangle {...ICON} /></span>
                 <div>
                   <div>{a.message}</div>
                   <div className="muted small">

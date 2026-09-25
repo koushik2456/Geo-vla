@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { UserPlus } from "lucide-react";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 
+const ICON = { size: 14, strokeWidth: 1.75 };
 const ROLES = ["public", "official", "admin"];
 
 export default function AdminPage() {
@@ -39,16 +41,18 @@ export default function AdminPage() {
 
   return (
     <div className="page">
-      <h1>Users</h1>
+      <div className="page-head">
+        <h1>Users</h1>
+      </div>
       {msg && <div className="info">{msg}</div>}
-      <form className="card row wrap" onSubmit={create}>
+      <form className="card row wrap admin-form" onSubmit={create}>
         <div className="field"><label htmlFor="a-u">Username</label><input id="a-u" value={f.username} onChange={set("username")} required /></div>
         <div className="field"><label htmlFor="a-p">Temporary password</label><input id="a-p" type="password" value={f.password} onChange={set("password")} required minLength={8} /></div>
         <div className="field"><label htmlFor="a-r">Role</label><select id="a-r" value={f.role} onChange={set("role")}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></div>
         <div className="field"><label htmlFor="a-n">Full name</label><input id="a-n" value={f.full_name} onChange={set("full_name")} /></div>
         <div className="field"><label htmlFor="a-o">Department</label><input id="a-o" value={f.organization} onChange={set("organization")} /></div>
         <div className="field"><label htmlFor="a-e">Email</label><input id="a-e" type="email" value={f.email} onChange={set("email")} /></div>
-        <button className="primary">Add user</button>
+        <button className="primary"><UserPlus {...ICON} /> Add user</button>
       </form>
       <section className="card">
         <table className="data-table">
@@ -56,17 +60,26 @@ export default function AdminPage() {
           <tbody>
             {users.map((u) => (
               <tr key={u.id} className={u.active ? "" : "muted"}>
-                <td><strong>{u.username}</strong><div className="small muted">{u.full_name} {u.email && `· ${u.email}`}</div></td>
+                <td>
+                  <strong>{u.username}</strong>
+                  <div className="small muted">{u.full_name}{u.email ? ` · ${u.email}` : ""}</div>
+                </td>
                 <td className="small">{u.organization || "—"}</td>
                 <td>
                   <select value={u.role} disabled={u.id === me.id} aria-label={`Role of ${u.username}`} onChange={(e) => patch(u, { role: e.target.value }, `${u.username} is now ${e.target.value}`)}>
                     {ROLES.map((r) => <option key={r}>{r}</option>)}
                   </select>
                 </td>
-                <td>{u.active ? "active" : "deactivated"}</td>
+                <td>
+                  <span className={`status ${u.active ? "status-done" : "status-failed"}`}>{u.active ? "active" : "deactivated"}</span>
+                </td>
                 <td className="row">
                   <button className="link" onClick={() => reset(u)}>Reset password</button>
-                  {u.id !== me.id && <button className="link danger" onClick={() => patch(u, { active: !u.active })}>{u.active ? "Deactivate" : "Reactivate"}</button>}
+                  {u.id !== me.id && (
+                    <button className="link danger" onClick={() => patch(u, { active: !u.active })}>
+                      {u.active ? "Deactivate" : "Reactivate"}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
