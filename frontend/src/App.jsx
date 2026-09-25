@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Bell, Globe2, Layers, FolderOpen, Activity, BrainCircuit, Users, LogOut, ChevronDown } from "lucide-react";
 import { api } from "./api.js";
 import { AuthProvider, useAuth } from "./auth.jsx";
 import { navigate, useRoute } from "./router.js";
@@ -41,12 +42,12 @@ function Shell() {
 
   const [page, arg] = route;
   const links = [
-    ["", "Analyze", true],
-    ["explore", "Globe Explorer", true],
-    ["projects", "Projects", !!user],
-    ["monitoring", "Monitoring", can("official")],
-    ["studio", "Training studio", can("admin")],
-    ["admin", "Users", can("admin")],
+    ["", "Analyze", true, Layers],
+    ["explore", "Explore", true, Globe2],
+    ["projects", "Projects", !!user, FolderOpen],
+    ["monitoring", "Monitoring", can("official"), Activity],
+    ["studio", "Models", can("admin"), BrainCircuit],
+    ["admin", "Users", can("admin"), Users],
   ];
   const active = (id) => (id === "" ? !page || page === "run" || page === "share" : page === id);
   const guard = (role, el) => (!ready ? null : can(role) ? el : <div className="page narrow"><div className="card">This page needs the <b>{role}</b> role. {!user && <a href="#/login">Sign in</a>}</div></div>);
@@ -71,35 +72,50 @@ function Shell() {
     <div className="app">
       <header className="topbar">
         <a className="brand" href="#/">
-          <span className="logo" aria-hidden="true">◆</span> Geo-VLA<span className="brand-sub">Geospatial AI</span>
+          <span className="logo" aria-hidden="true"><Globe2 size={14} strokeWidth={2.25} /></span>
+          <span className="brand-name">GEO-VLA</span>
+          <span className="brand-sub">Geospatial analysis</span>
         </a>
         <nav>
-          {links.filter(([, , show]) => show).map(([id, label]) => (
-            <a key={id} href={`#/${id}`} className={active(id) ? "active" : ""}>{label}</a>
+          {links.filter(([, , show]) => show).map(([id, label, , Icon]) => (
+            <a key={id} href={`#/${id}`} className={active(id) ? "active" : ""}>
+              <Icon size={15} strokeWidth={1.75} aria-hidden="true" />
+              {label}
+            </a>
           ))}
         </nav>
         <div className="topbar-right">
           {health?.status === "ok" && (
-            <span className="chips">
-              <span className={`chip ${health.planner === "llm" ? "ok" : "warn"}`} title={health.model || "Planner"}>{health.planner === "llm" ? `AI · ${health.provider}` : "offline planner"}</span>
-              <span className={`chip ${health.data_mode === "live" ? "ok" : "warn"}`} title="Data source">{health.data_mode === "live" ? "live data" : "demo data"}</span>
-            </span>
+            <div className="sys-status" aria-label="System status">
+              <span title={health.imagery_source === "synthetic" ? "No satellite credentials: synthetic imagery" : `Sentinel-2 via ${health.imagery_source}`}>
+                <i className={`dot ${health.data_mode === "live" ? "ok" : "warn"}`} />
+                {health.data_mode === "live" ? `S2 ${health.imagery_source}` : "S2 demo"}
+              </span>
+              <span title={health.model || "Rule-based planner"}>
+                <i className={`dot ${health.planner === "llm" ? "ok" : "warn"}`} />
+                {health.planner === "llm" ? `LLM ${health.provider}` : "LLM off"}
+              </span>
+              <span title="Active land-cover model">
+                <i className={`dot ${health.checkpoints?.classifier ? "ok" : "warn"}`} />
+                CNN {health.checkpoints?.classifier ?? "none"}
+              </span>
+            </div>
           )}
-          {health?.status === "down" && <span className="chip bad">backend offline</span>}
+          {health?.status === "down" && <span className="chip bad">API offline</span>}
           {user && can("official") && (
             <button className="bell" onClick={() => navigate("/monitoring")} aria-label={`${unread} unread alerts`}>
-              🔔{unread > 0 && <span className="bell-count">{unread}</span>}
+              <Bell size={16} strokeWidth={1.75} />{unread > 0 && <span className="bell-count">{unread}</span>}
             </button>
           )}
           {user ? (
             <div className="user-menu">
               <button onClick={() => setMenu((m) => !m)} aria-expanded={menu}>
-                {user.full_name || user.username} <span className="role">{user.role}</span>
+                {user.full_name || user.username} <span className="role">{user.role}</span> <ChevronDown size={14} />
               </button>
               {menu && (
                 <div className="menu" onMouseLeave={() => setMenu(false)}>
                   <div className="muted small">{user.organization || user.username}</div>
-                  <button onClick={() => { setMenu(false); logout(); navigate("/"); }}>Sign out</button>
+                  <button onClick={() => { setMenu(false); logout(); navigate("/"); }}><LogOut size={14} /> Sign out</button>
                 </div>
               )}
             </div>

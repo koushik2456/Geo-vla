@@ -1,0 +1,18 @@
+/* 3D Studio (Three.js). Owner: globe agent. */
+.terrain3d { background: radial-gradient(ellipse at 50% 40%, #0b1426 0%, #04060b 70%); }
+.t3-canvas canvas { display: block; }
+.t3-labels { position: absolute; inset: 0; pointer-events: none; }
+.t3-label { font: 600 11px/1 var(--mono); color: #e6edf7; text-shadow: 0 0 6px rgba(0, 0, 0, 0.9); white-space: nowrap; pointer-events: none; }
+.t3-label.contour { color: #fff7c2; font-size: 10px; background: rgba(4, 6, 11, 0.55); padding: 1px 4px; border-radius: 4px; }
+.t3-label.coord { color: #ff7ad9; font-size: 10px; }
+.t3-label.elev { color: #7dd3fc; font-size: 10px; }
+.t3-label.water { color: #93c5fd; font-size: 10px; }
+.t3-label.slab { font: 700 15px/1 var(--mono); letter-spacing: 0.18em; color: #c7d2fe; text-shadow: 0 0 12px rgba(99, 102, 241, 0.9); }
+.t3-panel { position: absolute; z-index: 3; top: 56px; left: 12px; width: 270px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.t3-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.t3-modes button { justify-content: center; font-size: 12px; padding: 6px 8px; }
+.t3-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.t3-toggles { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+.t3-toggles label { display: flex; gap: 5px; align-items: center; }
+.t3-legend { position: absolute; z-index: 3; right: 12px; bottom: 36px; width: 240px; padding: 10px 12px; }
+.t3-ramp { height: 10px; border-radius: 5px; background: linear-gradient(90deg, #261e8c, #5430be, #9646b4, #e16e78, #faaa50, #ffeC96); margin-bottom: 4px; }

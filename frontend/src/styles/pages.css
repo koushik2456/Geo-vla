@@ -1,0 +1,38 @@
+/* Secondary pages: projects, monitoring, login, admin. */
+.page { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+.page.narrow { align-items: center; }
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.auth-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 6px; margin-top: 30px; }
+.auth-card .field input { width: 100%; }
+.auth-card button.primary { justify-content: center; padding: 9px; }
+.projects-layout, .monitor-layout { display: flex; gap: 14px; align-items: flex-start; }
+.projects-layout > aside { width: 260px; flex-shrink: 0; }
+.nav-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.nav-list li { display: flex; align-items: center; gap: 4px; }
+.nav-list button:not(.link) { flex: 1; justify-content: space-between; border: none; background: none; text-align: left; }
+.nav-list button.active { background: var(--accent-soft); color: var(--accent); }
+.nav-list em { font-style: normal; font-size: 11px; color: var(--muted); }
+.monitor-layout > .grow { display: flex; flex-direction: column; gap: 12px; }
+.alerts-card { width: 340px; flex-shrink: 0; }
+.monitor.paused { opacity: 0.6; }
+.monitor-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.monitor-body { display: grid; grid-template-columns: 1fr auto auto auto; gap: 16px; align-items: center; margin-bottom: 10px; }
+.sparkline .threshold { stroke: var(--error-text); stroke-dasharray: 3 3; stroke-width: 1; }
+.monitor-form .row .field { margin-bottom: 0; }
+.alert-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.alert-list li { display: flex; gap: 8px; padding: 8px; border-radius: 6px; background: var(--panel-2); }
+.alert-list li.unread { border-left: 3px solid var(--error-text); }
+.alert-icon { color: var(--error-text); font-weight: 700; }
+.alert-list li.error .alert-icon { color: var(--warn-text); }
+.progress { height: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin: 6px 0; }
+.progress div { height: 100%; background: var(--accent); transition: width 0.4s; }
+.upload { margin-top: 6px; }
+.upload summary { cursor: pointer; color: var(--accent); }
+
+
+@media (max-width: 900px) {
+  .projects-layout, .monitor-layout { flex-direction: column; align-items: stretch; }
+  .projects-layout > aside, .alerts-card { width: 100%; }
+  .monitor-body { grid-template-columns: 1fr 1fr; }
+  .page { padding: 14px 16px; }
+}
