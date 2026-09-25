@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { fmt } from "../layers.js";
 
-// Categorical slots 1-3 of the validated palette (see styles.css --series-*); text stays in ink tokens.
+// Categorical slots 1-3 of the validated palette (see tokens.css --series-*); text stays in ink tokens.
 const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)"];
 const W = 400;
 const H = 210;
@@ -20,10 +20,9 @@ function niceTicks(min, max, count = 4) {
   return ticks;
 }
 
-function roundedTopBar(x, y, w, h, r) {
+function flatBar(x, y, w, h) {
   if (h <= 0) return "";
-  r = Math.min(r, w / 2, h);
-  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+  return `M${x},${y + h}V${y}H${x + w}V${y + h}Z`;
 }
 
 function Legend({ series, colors = SERIES }) {
@@ -46,7 +45,7 @@ function Tooltip({ x, y, title, rows, unit }) {
       <strong>{title}</strong>
       {rows.map((r) => (
         <div key={r.name}>
-          <i style={{ background: r.color }} /> {r.name}: <b>{fmt(r.value, 3)}</b> {unit}
+          <i style={{ background: r.color }} /> {r.name}: <b className="mono">{fmt(r.value, 3)}</b> {unit}
         </div>
       ))}
     </div>
@@ -85,7 +84,7 @@ function BarChart({ chart }) {
             <g key={c} onMouseEnter={() => setHover(ci)} onMouseLeave={() => setHover(null)}>
               <rect x={PAD.left + ci * band} y={PAD.top} width={band} height={plotH} fill="transparent" />
               {series.map((s, si) => (
-                <path key={s.name} d={roundedTopBar(x0 + si * (barW + 2), y(s.values[ci]), barW, y(0) - y(s.values[ci]), 4)}
+                <path key={s.name} d={flatBar(x0 + si * (barW + 2), y(s.values[ci]), barW, y(0) - y(s.values[ci]))}
                   fill={SERIES_C[si]} opacity={hover === null || hover === ci ? 1 : 0.45} />
               ))}
               <text x={PAD.left + ci * band + band / 2} y={H - PAD.bottom + 14} className="axis" textAnchor={cats.length > 4 ? "end" : "middle"}
@@ -151,15 +150,19 @@ function LineChart({ chart }) {
           </text>
         )}
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={PAD.top + plotH} className="crosshair" />}
-        {series.map((s, si) => (
-          <g key={s.name}>
-            <polyline fill="none" stroke={SERIES_C[si]} strokeWidth="2" strokeLinejoin="round"
-              points={s.values.map((v, i) => `${x(i)},${y(v)}`).join(" ")} />
-            {s.values.map((v, i) => (xs.length <= 24 || hover === i) && (
-              <circle key={i} cx={x(i)} cy={y(v)} r={hover === i ? 5 : 4} fill={SERIES_C[si]} stroke="var(--panel-solid)" strokeWidth="2" />
-            ))}
-          </g>
-        ))}
+        {series.map((s, si) => {
+          const pts = s.values.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+          const area = `${x(0)},${y(lo)} ${pts} ${x(xs.length - 1)},${y(lo)}`;
+          return (
+            <g key={s.name}>
+              <polygon fill={SERIES_C[si]} fillOpacity="0.15" stroke="none" points={area} />
+              <polyline fill="none" stroke={SERIES_C[si]} strokeWidth="1.5" strokeLinejoin="round" points={pts} />
+              {s.values.map((v, i) => (xs.length <= 24 || hover === i) && (
+                <circle key={i} cx={x(i)} cy={y(v)} r={hover === i ? 3.5 : 2.5} fill={SERIES_C[si]} stroke="var(--surface-1)" strokeWidth="1.5" />
+              ))}
+            </g>
+          );
+        })}
         <text x={12} y={PAD.top + plotH / 2} className="axis" transform={`rotate(-90 12 ${PAD.top + plotH / 2})`} textAnchor="middle">
           {chart.unit}
         </text>
@@ -181,7 +184,7 @@ export function DataTable({ columns, rows }) {
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i}>{r.map((c, j) => <td key={j}>{fmt(c, 3)}</td>)}</tr>
+            <tr key={i}>{r.map((c, j) => <td key={j} className={typeof c === "number" ? "num" : undefined}>{fmt(c, 3)}</td>)}</tr>
           ))}
         </tbody>
       </table>
@@ -224,11 +227,11 @@ export function KeyFigures({ figures }) {
     <div className="figures">
       {figures.map((f) => (
         <div className="figure" key={f.label}>
-          <div className="figure-value">
-            {fmt(f.value)}
-            <span>{f.unit}</span>
-          </div>
           <div className="figure-label">{f.label}</div>
+          <div className="figure-value mono">
+            {fmt(f.value)}
+            {f.unit && <span className="figure-unit">{f.unit}</span>}
+          </div>
           {f.note && <div className="figure-note">{f.note}</div>}
         </div>
       ))}

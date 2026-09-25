@@ -114,38 +114,37 @@ export default function AnalyzePage({ runId, shareToken, aoi, setAoi, place, set
         {readOnly && <div className="info">Shared analysis (read-only). <a href="#/">Start your own</a></div>}
         {!readOnly && run && (
           <button className="link back" onClick={() => navigate("/")}>
-            ← New analysis
+            New analysis
           </button>
         )}
         {!readOnly && !run && (
           <>
-            <section className="aoi-card">
-              <h2>1 · Area</h2>
-              <p className="small">
-                {place ? <strong>{place}</strong> : "Custom area"} — search above the map, draw a box, or use the current view.
-              </p>
-              <code className="small muted">[{aoi.map((v) => v.toFixed(3)).join(", ")}]</code>
+            <section className="process-section area-section">
+              <h2 className="section-title">Area</h2>
+              <div className="area-place">{place || "Custom area"}</div>
+              <code className="area-bbox mono">[{aoi.map((v) => v.toFixed(3)).join(", ")}]</code>
+              <p className="hint">Search the map, draw a box, or use the current view.</p>
             </section>
-            <section>
-              <h2>2 · Analysis</h2>
+            <section className="process-section">
+              <h2 className="section-title">Process</h2>
               <div className="tabs" role="tablist">
                 <button role="tab" aria-selected={mode === "workflows"} className={mode === "workflows" ? "active" : ""} onClick={() => setMode("workflows")}>
-                  Ready-made workflows
+                  Workflows
                 </button>
                 <button role="tab" aria-selected={mode === "ask"} className={mode === "ask" ? "active" : ""} onClick={() => setMode("ask")}>
-                  Ask a question
+                  Ask
                 </button>
               </div>
               {mode === "workflows" ? <WorkflowPanel catalog={catalog} busy={starting} onRun={start} /> : <AskPanel busy={starting} onRun={start} planner={health?.planner} />}
             </section>
           </>
         )}
-        {error && <div className="error">⚠ {error}</div>}
+        {error && <div className="error">{error}</div>}
         {run && <ResultPanel run={run} share={shareToken} onChanged={load} />}
       </aside>
 
       <main className="map-area">
-        <div className="view-toggle" role="tablist" aria-label="Map view">
+        <div className="view-toggle segmented glass" role="tablist" aria-label="Map view">
           {VIEWS.map(([id, label]) => (
             <button key={id} role="tab" aria-selected={view === id} className={view === id ? "active" : ""} onClick={() => setView(id)}
               disabled={(id === "compare" && layers.filter((l) => l.tiles).length < 2) || (id === "studio3d" && run?.status !== "done")}>
@@ -160,11 +159,11 @@ export default function AnalyzePage({ runId, shareToken, aoi, setAoi, place, set
         )}
 
         {view === "studio3d" && run?.status === "done" ? (
-          <Suspense fallback={<div className="map-loading">Loading 3D studio…</div>}>
+          <Suspense fallback={<div className="map-loading glass">Loading 3D studio…</div>}>
             <TerrainView key={run.id} run={run} share={shareToken} />
           </Suspense>
         ) : view === "globe" ? (
-          <Suspense fallback={<div className="map-loading">Loading 3D globe…</div>}>
+          <Suspense fallback={<div className="map-loading glass">Loading 3D globe…</div>}>
             <GlobeView {...mapProps} />
           </Suspense>
         ) : view === "compare" && layers.length ? (
@@ -175,7 +174,7 @@ export default function AnalyzePage({ runId, shareToken, aoi, setAoi, place, set
 
         {layers.length > 0 && view !== "compare" && view !== "studio3d" && <LayerPanel layers={layers} layerState={layerState} onChange={setLayerState} />}
         {Object.keys(groups).length > 0 && view !== "compare" && view !== "studio3d" && <TimelapsePlayer groups={groups} onShow={showFrame} />}
-        {running && <div className="map-busy"><span className="spinner" aria-hidden="true" /> Running analysis…</div>}
+        {running && <div className="map-busy glass"><span className="spinner" aria-hidden="true" /> Running…</div>}
       </main>
     </div>
   );

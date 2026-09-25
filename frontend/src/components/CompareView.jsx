@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { GripVertical } from "lucide-react";
 import { BASE_STYLE, addResultLayer, maplibregl, removeResultLayers, transformRequest } from "../mapStyle.js";
 
 /** Before/after swipe: two synchronised maps, the right one clipped by a draggable divider. */
@@ -103,9 +104,11 @@ export default function CompareView({ aoi, layers, share, left, right, onChange 
           if (e.key === "ArrowLeft") setSplit((s) => Math.max(0.02, s - 0.05));
           if (e.key === "ArrowRight") setSplit((s) => Math.min(0.98, s + 0.05));
         }}>
-        <span>⇆</span>
+        <span className="swipe-handle" aria-hidden="true">
+          <GripVertical size={14} strokeWidth={1.75} />
+        </span>
       </div>
-      <div className="compare-bar">
+      <div className="compare-bar glass">
         {picker(left, (v) => onChange(v, right), "Left")}
         {picker(right, (v) => onChange(left, v), "Right")}
       </div>

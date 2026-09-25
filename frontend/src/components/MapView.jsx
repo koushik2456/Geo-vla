@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { BoxSelect, Maximize2 } from "lucide-react";
 import { BASE_STYLE, addResultLayer, bboxPolygon, maplibregl, removeResultLayers, transformRequest } from "../mapStyle.js";
 import { sortForDrawing } from "../layers.js";
 
@@ -115,11 +116,16 @@ export default function MapView({ aoi, onAoiChange, layers, layerState, terrain,
     <div className="map-wrap">
       <div ref={container} className="map" />
       {!readOnly && (
-        <div className="aoi-tools">
-          <button className={drawing ? "active" : ""} onClick={() => setDrawing((d) => !d)}>
+        <div className="aoi-tools segmented glass">
+          <button className={drawing ? "active" : ""} onClick={() => setDrawing((d) => !d)}
+            aria-label={drawing ? "Drawing area" : "Draw area"} title={drawing ? "Drag a box" : "Draw area"}>
+            <BoxSelect size={14} strokeWidth={1.75} aria-hidden="true" />
             {drawing ? "Drag a box…" : "Draw area"}
           </button>
-          <button onClick={aoiFromView}>Use view</button>
+          <button onClick={aoiFromView} aria-label="Use current view" title="Use view">
+            <Maximize2 size={14} strokeWidth={1.75} aria-hidden="true" />
+            Use view
+          </button>
         </div>
       )}
     </div>

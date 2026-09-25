@@ -15,15 +15,15 @@ export default function AskPanel({ busy, onRun, planner }) {
   };
   return (
     <form className="ask" onSubmit={submit}>
-      <label htmlFor="instruction">Ask in plain language</label>
+      <label htmlFor="instruction">Instruction</label>
       <textarea id="instruction" rows={4} value={text} onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && submit(e)}
-        placeholder="Describe what you want to know about the selected area…" />
-      <small className="muted">
-        {planner === "llm" ? "The AI agent plans the analysis and explains each step." : "Offline mode: a rule-based planner handles common questions. Add a GROQ_API_KEY (free) for the AI agent."}
-      </small>
+        placeholder="Describe the analysis for the selected area…" />
+      <p className="hint">
+        {planner === "llm" ? "Agent plans and executes tools." : "Offline planner. Set GROQ_API_KEY for the LLM agent."}
+      </p>
       <button type="submit" className="primary" disabled={busy || !text.trim()}>
-        {busy ? "Running…" : "Run agent"}
+        {busy ? "Running…" : "Run"}
       </button>
       <details className="examples">
         <summary>Examples</summary>

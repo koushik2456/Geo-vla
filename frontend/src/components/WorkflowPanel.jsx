@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Building2, Trees, Waves, Wheat } from "lucide-react";
 
-const SECTOR_ICONS = { disaster: "🌊", forest: "🌳", urban: "🏙️", agriculture: "🌾" };
+const SECTOR_ICONS = {
+  disaster: Waves,
+  forest: Trees,
+  urban: Building2,
+  agriculture: Wheat,
+};
 
 /** Mirror of services/workflows.resolve_date so date pickers show real dates. */
 export function resolveDate(value, today = new Date()) {
@@ -78,17 +84,21 @@ export default function WorkflowPanel({ catalog, busy, onRun }) {
 
   return (
     <div className="workflows">
-      <div className="sector-tabs" role="tablist">
-        {catalog.sectors.map((s) => (
-          <button key={s.id} role="tab" aria-selected={s.id === sector} className={s.id === sector ? "active" : ""} onClick={() => setSector(s.id)}>
-            <span aria-hidden="true">{SECTOR_ICONS[s.id]}</span> {s.title}
-          </button>
-        ))}
+      <div className="segmented sector-tabs" role="tablist">
+        {catalog.sectors.map((s) => {
+          const Icon = SECTOR_ICONS[s.id];
+          return (
+            <button key={s.id} role="tab" aria-selected={s.id === sector} className={s.id === sector ? "active" : ""}
+              onClick={() => setSector(s.id)} title={s.title}>
+              {Icon && <Icon size={14} strokeWidth={1.75} aria-hidden="true" />}
+              <span>{s.title}</span>
+            </button>
+          );
+        })}
       </div>
-      <p className="muted small">For: {sectorSpec.audience}</p>
       <div className="wf-cards">
         {sectorSpec.workflows.map((w) => (
-          <button key={w.id} className={`wf-card ${w.id === selected ? "selected" : ""}`} onClick={() => setSelected(w.id)}>
+          <button key={w.id} type="button" className={`wf-card ${w.id === selected ? "selected" : ""}`} onClick={() => setSelected(w.id)}>
             <strong>{w.title}</strong>
             <span>{w.summary}</span>
           </button>
@@ -97,11 +107,11 @@ export default function WorkflowPanel({ catalog, busy, onRun }) {
       {wf && (
         <form className="wf-form" onSubmit={submit}>
           <ParamFields wf={wf} values={values} onChange={setValues} />
-          <div className="wf-outputs">
-            You get: {wf.outputs.join(" · ")}
-          </div>
+          {wf.outputs?.length > 0 && (
+            <p className="hint wf-outputs">Outputs: {wf.outputs.join(", ")}</p>
+          )}
           <button type="submit" className="primary" disabled={busy}>
-            {busy ? "Running…" : `Run ${wf.title.toLowerCase()}`}
+            {busy ? "Running…" : "Run"}
           </button>
         </form>
       )}
