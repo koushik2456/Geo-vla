@@ -26,10 +26,15 @@ Team: R. Yashaswini (RA2311026010090) · T. Vinay Koushik (RA2311026010091)
 
 ## Quick start
 
-Everything runs with **no keys, no data downloads and no trained models**. Each missing
-piece has a clearly labelled fallback: a rule-based planner instead of an LLM, a
-synthetic demo world instead of satellite data, and classical algorithms instead of
-untrained networks.
+Geo-VLA works on **real data by default**. Elevation (Copernicus DEM) and OpenStreetMap need
+no key. Sentinel-2 imagery needs free Copernicus credentials; until they are in `.env`,
+imagery steps stop with a message saying so (the top bar shows `S2 no key`) instead of
+quietly using fake imagery. Other missing pieces have labelled fallbacks: a rule-based
+planner instead of an LLM, and classical algorithms until a network is trained. For a demo
+with no internet, set `GEO_VLA_DATA_MODE=synthetic` to use the labelled synthetic world.
+
+How everything fits together (data flow, users, training, evaluation) is explained in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 **One-command setup** (Python 3.11+, Node 18+). It creates `.venv`, installs PyTorch (the
 CPU build when there is no NVIDIA GPU), builds the frontend, copies `.env.example` to
@@ -210,8 +215,12 @@ Admins can:
     several depths, and a 2D PCA of the learned embeddings coloured by class.
   - *Evaluation*: confusion matrix, per-class precision/recall/F1, sample predictions,
     and for change detection a threshold sweep (precision/recall/F1/IoU vs. threshold).
-- **compare** versions in the model registry by test accuracy or F1. Analytics stay
-  with each registered version.
+- **compare** versions in the model registry by **validation** accuracy or F1. Analytics
+  stay with each registered version.
+- **confirm** a chosen version once on the sealed test split. Training never touches the
+  test split; `python -m training.confirm` scores it a single time, and only after a frozen
+  pre-registration (`eval/confirmation/<name>/PREREG.md`) and your written approval
+  (`APPROVAL.md`) exist. See ARCHITECTURE.md, section 5.3.
 - **promote** a version to production. It is hot-reloaded without a restart, and the
   model version appears in every result's method line and in the PDF.
 - **switch back** to the classical fallback at any time.
@@ -280,8 +289,8 @@ models. Upload the `.pth` in the studio (or copy `models/registry/` across).
 5. Ask a free-text question to show the LLM composing tools, and download the PDF
    report and GeoTIFF to open in QGIS.
 
-Without Copernicus keys everything runs on the labelled synthetic demo world, which is
-safe for a live demo with no internet (use `LLM_PROVIDER=none` or Ollama offline).
+For a classroom with unreliable internet, set `GEO_VLA_DATA_MODE=synthetic` (and
+`LLM_PROVIDER=none` or a local Ollama) to run everything on the labelled synthetic world.
 
 ## Going live with real data
 

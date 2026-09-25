@@ -1,6 +1,8 @@
 # Versions tested together on Python 3.11 (see README for setup).
-# For a CPU-only (much smaller) torch, install it first:
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# Install torch FIRST from the right index (scripts/setup.* do this automatically):
+#   NVIDIA GPU: pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
+#   CPU only:   pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cpu
+# (On Windows the plain PyPI torch wheel is CPU-only.)
 
 # API
 fastapi==0.141.1

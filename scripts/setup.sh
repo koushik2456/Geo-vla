@@ -6,7 +6,10 @@ PY=${PYTHON:-python3}
 $PY -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-if ! command -v nvidia-smi >/dev/null 2>&1; then
+if command -v nvidia-smi >/dev/null 2>&1; then
+  echo "NVIDIA GPU detected - installing the CUDA build of PyTorch (cu130 covers RTX 50-series)"
+  pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
+else
   echo "No NVIDIA GPU detected — installing the smaller CPU build of PyTorch"
   pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cpu
 fi
