@@ -206,6 +206,7 @@ function DatasetExplorer({ datasets, onRefresh }) {
 // -- training form -------------------------------------------------------------------------------------
 
 const PRESETS = {
+  class_live: { label: "Classroom live: real EuroSAT subset (GPU, ~2 min)", model: "classifier", dataset: "eurosat", epochs: 5, batch_size: 64, lr: 0.0005, samples: 100, img_size: 224, max_samples: 3000 },
   demo: { label: "Classroom demo (CPU, ~1 min)", model: "classifier", dataset: "synthetic", epochs: 6, batch_size: 32, lr: 0.001, samples: 100, img_size: 64, max_samples: 0 },
   eurosat_quick: { label: "EuroSAT quick (CPU, ~10 min)", model: "classifier", dataset: "eurosat", epochs: 5, batch_size: 64, lr: 0.0005, samples: 100, img_size: 64, max_samples: 3000 },
   eurosat_full: { label: "EuroSAT full (GPU)", model: "classifier", dataset: "eurosat", epochs: 10, batch_size: 64, lr: 0.0003, samples: 100, img_size: 224, max_samples: 0 },
@@ -214,7 +215,7 @@ const PRESETS = {
 };
 
 function TrainForm({ datasets, onStarted }) {
-  const [f, setF] = useState({ ...PRESETS.demo, pretrained: true });
+  const [f, setF] = useState({ ...PRESETS.class_live, pretrained: true });
   const [error, setError] = useState(null);
   const options = datasets.filter((d) => d.model === f.model || d.model === "both");
   const chosen = datasets.find((d) => d.id === f.dataset);
