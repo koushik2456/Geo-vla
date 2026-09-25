@@ -28,12 +28,8 @@ export default function LoginPage() {
   return (
     <div className="page narrow">
       <form className="card auth-card" onSubmit={submit}>
-        <h1>{mode === "login" ? "Sign in" : "Create an account"}</h1>
-        <p className="muted small">
-          {mode === "login"
-            ? "Officials: use the account your administrator created. Anyone can run analyses without signing in."
-            : "Public accounts can save and share analyses. Officials get monitoring after an administrator upgrades the account."}
-        </p>
+        <div className="brand">Geo-VLA</div>
+        <h1>{mode === "login" ? "Sign in" : "Create account"}</h1>
         <div className="field">
           <label htmlFor="u">Username</label>
           <input id="u" autoComplete="username" value={f.username} onChange={set("username")} required />
@@ -53,18 +49,18 @@ export default function LoginPage() {
               <input id="o" value={f.organization} onChange={set("organization")} />
             </div>
             <div className="field">
-              <label htmlFor="e">Email (for alerts)</label>
+              <label htmlFor="e">Email</label>
               <input id="e" type="email" value={f.email} onChange={set("email")} />
             </div>
           </>
         )}
         {error && <div className="error">{error}</div>}
         <button className="primary" type="submit" disabled={busy}>
-          {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
+          {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
         </button>
         {signupOpen && (
-          <button type="button" className="link" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
-            {mode === "login" ? "No account? Create one" : "Have an account? Sign in"}
+          <button type="button" className="link mode-switch" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
+            {mode === "login" ? "Create account" : "Sign in"}
           </button>
         )}
       </form>

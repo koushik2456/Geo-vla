@@ -53,21 +53,31 @@ export function DatasetStats({ stats, imagePath }) {
     const h = stats.change_ratio_histogram;
     return (
       <div className="tab-body">
-        <div className="stat-row">
+        <div className="readout">
           <Stat label="Image pairs" value={stats.total.toLocaleString()} />
           <Stat label="Patch size" value={stats.image_shape.slice(0, 2).join("×")} note="RGB, before + after" />
-          <Stat label="Changed pixels" value={pct(stats.class_balance.changed)} note="class imbalance → weighted loss" />
-          <Stat label="Pairs without change" value={pct(stats.change_pixel_ratio.pairs_without_change)} />
+          <Stat label="Changed pixels" value={pct(stats.class_balance.changed)} />
+          <Stat label="No-change pairs" value={pct(stats.change_pixel_ratio.pairs_without_change)} />
         </div>
         <div className="studio-grid">
           <Chart chart={{ type: "bar", title: "Split sizes", unit: "pairs", categories: Object.keys(stats.split_sizes),
             series: [{ name: "Pairs", values: Object.values(stats.split_sizes) }] }} />
-          <Chart chart={{ type: "bar", title: "How much of each pair changed", unit: "pairs",
+          <Chart chart={{ type: "bar", title: "Change ratio per pair", unit: "pairs",
             categories: h.counts.map((_, i) => `${(100 * h.bins[i]).toFixed(1)}%`), series: [{ name: "Pairs", values: h.counts }] }} />
-          <Chart chart={{ type: "bar", title: "Mean colour before vs after", unit: "0–1", categories: ["Red", "Green", "Blue"],
-            series: [{ name: "Before (T1)", values: stats.channel_mean_t1 }, { name: "After (T2)", values: stats.channel_mean_t2 }] }} />
         </div>
-        {imagePath && <><h3 className="section-title">Sample pairs</h3><AuthImage path={imagePath} alt="Sample change pairs" /></>}
+        <div className="card">
+          <h3 className="section-title">Channel statistics</h3>
+          <dl className="kv">
+            <dt>Mean T1 (RGB)</dt><dd>{stats.channel_mean_t1.map((v) => v.toFixed(4)).join(", ")}</dd>
+            <dt>Mean T2 (RGB)</dt><dd>{stats.channel_mean_t2.map((v) => v.toFixed(4)).join(", ")}</dd>
+          </dl>
+        </div>
+        {imagePath && (
+          <div>
+            <h3 className="section-title">Sample pairs</h3>
+            <div className="sample-frame"><AuthImage path={imagePath} alt="Sample change pairs" /></div>
+          </div>
+        )}
       </div>
     );
   }
@@ -76,39 +86,67 @@ export function DatasetStats({ stats, imagePath }) {
   const h = stats.histograms;
   return (
     <div className="tab-body">
-      <div className="stat-row">
+      <div className="readout">
         <Stat label="Images" value={stats.total.toLocaleString()} note={stats.source} />
-        <Stat label="Image size" value={stats.image_shape.join("×")} note="height × width × RGB" />
+        <Stat label="Image size" value={stats.image_shape.join("×")} />
         <Stat label="Classes" value={classes.length} />
-        <Stat label="Train / val / test" value={Object.values(stats.split_sizes).join(" / ")} note="stratified split" />
+        <Stat label="Train / val / test" value={Object.values(stats.split_sizes).join(" / ")} />
+      </div>
+      <div className="card">
+        <h3 className="section-title">Class counts</h3>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Class</th>
+              {splits.map((s) => <th key={s} className="num">{s}</th>)}
+              <th className="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {classes.map((c) => {
+              const vals = splits.map((s) => stats.class_counts[s][c] || 0);
+              return (
+                <tr key={c}>
+                  <td>{c}</td>
+                  {vals.map((v, i) => <td key={splits[i]} className="num">{v}</td>)}
+                  <td className="num">{vals.reduce((a, b) => a + b, 0)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
       <div className="studio-grid">
         <Chart chart={{ type: "bar", title: "Class balance per split", unit: "images", categories: classes,
           series: splits.map((s) => ({ name: s, values: classes.map((c) => stats.class_counts[s][c]) })) }} />
-        <Chart chart={{ type: "line", title: "Pixel intensity histograms", unit: "pixels", colors: ["#ef4444", "#22c55e", "#3b82f6"],  x: h.bins.slice(0, -1).map((b) => b.toFixed(2)),
-          x_label: "intensity (0–1)", series: [{ name: "Red", values: h.R }, { name: "Green", values: h.G }, { name: "Blue", values: h.B }] }} />
-        <Chart chart={{ type: "bar", title: "Spectral signature: mean RGB per class", unit: "0–1", colors: ["#ef4444", "#22c55e", "#3b82f6"],  categories: classes,
-          series: ["Red", "Green", "Blue"].map((n, k) => ({ name: n, values: classes.map((c) => stats.per_class[c].mean_rgb[k]) })) }} />
+        <Chart chart={{ type: "line", title: "Pixel intensity", unit: "pixels", colors: ["var(--series-1)", "var(--series-2)", "var(--series-3)"],
+          x: h.bins.slice(0, -1).map((b) => b.toFixed(2)), x_label: "intensity (0–1)",
+          series: [{ name: "Red", values: h.R }, { name: "Green", values: h.G }, { name: "Blue", values: h.B }] }} />
       </div>
       <div className="studio-grid">
         <div className="card">
           <h3 className="section-title">Per-class features</h3>
           <DataTable columns={["Class", "Mean R", "Mean G", "Mean B", "Brightness", "Greenness"]}
             rows={classes.map((c) => [c, ...stats.per_class[c].mean_rgb, stats.per_class[c].brightness, stats.per_class[c].greenness_index])} />
-          <p className="hint">Greenness = (G − R) / (G + R): the visible-band proxy for NDVI. Vegetation classes score high, water and built-up low.</p>
         </div>
         <div className="card">
-          <h3 className="section-title">Normalisation</h3>
+          <h3 className="section-title">Channel statistics</h3>
           <dl className="kv">
             <dt>Dataset mean (RGB)</dt><dd>{stats.channel_mean.join(", ")}</dd>
             <dt>Dataset std (RGB)</dt><dd>{stats.channel_std.join(", ")}</dd>
             <dt>Network input mean</dt><dd>{stats.normalisation.mean.join(", ")}</dd>
             <dt>Network input std</dt><dd>{stats.normalisation.std.join(", ")}</dd>
+            <dt>Sample size</dt><dd>{stats.stats_sample_size.toLocaleString()}</dd>
           </dl>
-          <p className="hint">{stats.normalisation.note} — inputs are standardised the way the ImageNet-pretrained backbone expects. Statistics from {stats.stats_sample_size.toLocaleString()} images.</p>
+          <p className="hint">{stats.normalisation.note}</p>
         </div>
       </div>
-      {imagePath && <><h3 className="section-title">Samples per class</h3><AuthImage path={imagePath} alt="Dataset samples" /></>}
+      {imagePath && (
+        <div>
+          <h3 className="section-title">Samples</h3>
+          <div className="sample-frame"><AuthImage path={imagePath} alt="Dataset samples" /></div>
+        </div>
+      )}
     </div>
   );
 }
@@ -122,27 +160,46 @@ export function ArchitectureView({ arch }) {
   const maxLog = Math.max(...arch.layers.map((l) => Math.log10(l.params + 1)), 1);
   return (
     <div className="tab-body">
-      <div className="stat-row">
-        <Stat label="Parameters" value={(arch.total_params / 1e6).toFixed(2) + " M"} note={`${arch.trainable_params.toLocaleString()} trainable`} />
-        <Stat label="Weights size" value={`${arch.size_mb} MB`} note="float32" />
-        <Stat label="Input" value={shape(arch.input_shape)} note="batch × channels × H × W" />
-        <Stat label="Blocks shown" value={arch.layers.length} />
+      <div className="readout">
+        <Stat label="Parameters" value={`${(arch.total_params / 1e6).toFixed(2)} M`} note={`${arch.trainable_params.toLocaleString()} trainable`} />
+        <Stat label="Weights" value={`${arch.size_mb} MB`} note="float32" />
+        <Stat label="Input" value={shape(arch.input_shape)} />
+        <Stat label="Blocks" value={arch.layers.length} />
       </div>
-      <div className="card arch">
-        <h3 className="section-title">{arch.title} — forward pass, layer by layer</h3>
-        <div className="arch-row small muted"><span>Block</span><span>Parameters (log scale)</span><span>Output shape</span><span>Type</span></div>
-        {arch.layers.map((l) => (
-          <div className="arch-row" key={l.name}>
-            <strong>{l.name}</strong>
-            <div className="arch-bar" style={{ width: `${Math.max(2, (100 * Math.log10(l.params + 1)) / maxLog)}%` }}>{l.params.toLocaleString()}</div>
-            <span className="mono">{shape(l.output_shape)}</span>
-            <span className="mono">{l.type}</span>
-          </div>
-        ))}
+      <div className="card">
+        <h3 className="section-title">{arch.title}</h3>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Output shape</th>
+              <th className="num">Params</th>
+              <th aria-hidden="true" />
+            </tr>
+          </thead>
+          <tbody>
+            {arch.layers.map((l) => (
+              <tr key={l.name}>
+                <td>{l.name}</td>
+                <td className="mono">{l.type}</td>
+                <td className="mono">{shape(l.output_shape)}</td>
+                <td className="num">{l.params.toLocaleString()}</td>
+                <td className="param-bar-cell">
+                  <div className="param-bar" style={{ width: `${Math.max(2, (100 * Math.log10(l.params + 1)) / maxLog)}%` }} title={l.params.toLocaleString()} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
       {arch.notes && (
         <div className="card">
-          <dl className="kv">{Object.entries(arch.notes).map(([k, v]) => <React.Fragment key={k}><dt>{k}</dt><dd style={{ fontFamily: "var(--font)" }}>{v}</dd></React.Fragment>)}</dl>
+          <dl className="kv">
+            {Object.entries(arch.notes).map(([k, v]) => (
+              <React.Fragment key={k}><dt>{k}</dt><dd style={{ fontFamily: "var(--font)" }}>{v}</dd></React.Fragment>
+            ))}
+          </dl>
         </div>
       )}
     </div>
@@ -153,7 +210,7 @@ export function ArchitectureView({ arch }) {
 
 function ConfusionMatrix({ report }) {
   const cm = report.confusion_matrix;
-  const rowsum = cm.map((r) => r.reduce((a, b) => a + b, 0) || 1);
+  const max = Math.max(...cm.flat(), 1);
   return (
     <div className="table-wrap">
       <table className="cm">
@@ -163,13 +220,15 @@ function ConfusionMatrix({ report }) {
         <tbody>
           {cm.map((row, i) => (
             <tr key={i}>
-              <th style={{ textAlign: "right", paddingRight: 6, width: "auto" }}>{report.classes[i]}</th>
+              <th className="row-label">{report.classes[i]}</th>
               {row.map((v, j) => {
-                const t = v / rowsum[i];
+                const t = v / max;
                 return (
-                  <td key={j} title={`true ${report.classes[i]} → predicted ${report.classes[j]}: ${v}`}
-                    style={{ background: i === j ? `rgba(52,211,153,${0.15 + 0.85 * t})` : v ? `rgba(248,113,113,${0.15 + 0.85 * t})` : "rgba(255,255,255,0.03)",
-                      color: t > 0.5 ? "#04100a" : "var(--text)" }}>
+                  <td
+                    key={j}
+                    title={`true ${report.classes[i]} → predicted ${report.classes[j]}: ${v}`}
+                    style={{ background: `color-mix(in srgb, var(--accent) ${Math.round(t * 100)}%, var(--surface-2))` }}
+                  >
                     {v || ""}
                   </td>
                 );
@@ -178,14 +237,13 @@ function ConfusionMatrix({ report }) {
           ))}
         </tbody>
       </table>
-      <p className="hint">Rows = true class, columns = prediction. Diagonal (green) = correct; off-diagonal (red) shows which classes the network confuses.</p>
+      <p className="hint">Rows = true class, columns = prediction.</p>
     </div>
   );
 }
 
 function EmbeddingScatter({ emb, classes }) {
   const [hover, setHover] = useState(null);
-  // Robust axes (2nd–98th percentile) so a few outliers don't squash the clusters.
   const q = (arr, p) => [...arr].sort((a, b) => a - b)[Math.min(arr.length - 1, Math.max(0, Math.round(p * (arr.length - 1))))];
   const xs = emb.points.map((p) => p[0]);
   const ys = emb.points.map((p) => p[1]);
@@ -210,8 +268,7 @@ function EmbeddingScatter({ emb, classes }) {
           </span>
         ))}
       </div>
-      <p className="hint">Each dot is a test image: its {emb.dim}-dimensional penultimate-layer feature vector projected to 2-D with PCA
-        ({pct(emb.explained_variance[0])} + {pct(emb.explained_variance[1])} of variance). Tight, separated clusters = the network learned discriminative features. Hover a class to highlight it.</p>
+      <p className="hint">PCA of {emb.dim}-d features ({pct(emb.explained_variance[0])} + {pct(emb.explained_variance[1])} variance).</p>
     </div>
   );
 }
@@ -222,12 +279,12 @@ export function EvaluationView({ ev, model }) {
     const c = ev.confusion;
     return (
       <div className="tab-body">
-        <div className="stat-row">
-          <Stat label="F1" value={pct(ev.f1)} note="harmonic mean of precision and recall" />
-          <Stat label="IoU" value={pct(ev.iou)} note="overlap of predicted and true change" />
+        <div className="readout">
+          <Stat label="F1" value={pct(ev.f1)} />
+          <Stat label="IoU" value={pct(ev.iou)} />
           <Stat label="Precision" value={pct(ev.precision)} />
           <Stat label="Recall" value={pct(ev.recall)} />
-          <Stat label="Overall accuracy" value={pct(ev.overall_accuracy)} note="inflated by unchanged pixels" />
+          <Stat label="Overall accuracy" value={pct(ev.overall_accuracy)} />
           <Stat label="Best threshold" value={ev.best_threshold.threshold} note={`F1 ${pct(ev.best_threshold.f1)}`} />
         </div>
         <div className="studio-grid">
@@ -239,7 +296,6 @@ export function EvaluationView({ ev, model }) {
             <h3 className="section-title">Pixel confusion (threshold 0.5)</h3>
             <DataTable columns={["", "Predicted change", "Predicted no change"]}
               rows={[["True change", c.tp.toLocaleString(), c.fn.toLocaleString()], ["True no change", c.fp.toLocaleString(), c.tn.toLocaleString()]]} />
-            <p className="hint">Raising the threshold trades recall for precision; the sweep shows where F1 peaks.</p>
           </div>
         </div>
       </div>
@@ -247,22 +303,44 @@ export function EvaluationView({ ev, model }) {
   }
   const classes = ev.classes;
   const per = ev.per_class;
+  const supported = classes.filter((c) => per[c].support);
   return (
     <div className="tab-body">
-      <div className="stat-row">
+      <div className="readout">
         <Stat label="Test accuracy" value={pct(ev.accuracy)} />
-        <Stat label="Macro F1" value={pct(ev.macro_f1)} note="mean F1 over classes" />
+        <Stat label="Macro F1" value={pct(ev.macro_f1)} />
         <Stat label="Test loss" value={fmt(ev.test_loss, 3)} />
         <Stat label="Test images" value={Object.values(per).reduce((a, v) => a + v.support, 0)} />
       </div>
       <div className="studio-grid">
         <div className="card"><h3 className="section-title">Confusion matrix</h3><ConfusionMatrix report={ev} /></div>
-        <div className="card"><h3 className="section-title">Learned feature space</h3><EmbeddingScatter emb={ev.embedding} classes={classes} /></div>
+        <div className="card"><h3 className="section-title">Feature space</h3><EmbeddingScatter emb={ev.embedding} classes={classes} /></div>
       </div>
-      <Chart chart={{ type: "bar", title: "Per-class precision / recall / F1", unit: "%", categories: classes.filter((c) => per[c].support),
-        series: ["precision", "recall", "f1"].map((k) => ({ name: k[0].toUpperCase() + k.slice(1), values: classes.filter((c) => per[c].support).map((c) => +(100 * per[c][k]).toFixed(1)) })) }} />
-      <DataTable columns={["Class", "Precision", "Recall", "F1", "Support"]}
-        rows={classes.map((c) => [c, pct(per[c].precision), pct(per[c].recall), pct(per[c].f1), per[c].support])} />
+      <div className="card">
+        <h3 className="section-title">Per-class precision / recall / F1</h3>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Class</th>
+              <th className="num">Precision</th>
+              <th className="num">Recall</th>
+              <th className="num">F1</th>
+              <th className="num">Support</th>
+            </tr>
+          </thead>
+          <tbody>
+            {supported.map((c) => (
+              <tr key={c}>
+                <td>{c}</td>
+                <td className="num">{pct(per[c].precision)}</td>
+                <td className="num">{pct(per[c].recall)}</td>
+                <td className="num">{pct(per[c].f1)}</td>
+                <td className="num">{per[c].support}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -273,36 +351,64 @@ export function TrainingCurves({ job }) {
   const isCls = job.model === "classifier";
   const hist = job.history || [];
   const b = job.batches || [];
+  const cur = job.progress?.current || b.at(-1);
   const x = b.map((e) => String(e.global_step ?? `${e.epoch}.${e.step}`));
   const charts = [];
   if (b.length > 1) {
-    charts.push({ type: "line", title: "Loss per batch", unit: "loss", x, x_label: "optimisation step", series: [{ name: "Loss", values: b.map((e) => +e.loss.toFixed(4)) }] });
-    if (b[0].lr != null) charts.push({ type: "line", title: "Learning rate schedule", unit: "lr", x, x_label: "step", series: [{ name: "Learning rate", values: b.map((e) => e.lr) }] });
-    if (b[0].grad_norm != null) charts.push({ type: "line", title: "Gradient norm", unit: "‖∇‖", x, x_label: "step", series: [{ name: "Gradient L2 norm", values: b.map((e) => +e.grad_norm.toFixed(3)) }] });
-    if (b[0].batch_acc != null) charts.push({ type: "line", title: "Batch accuracy", unit: "%", x, x_label: "step", series: [{ name: "Accuracy", values: b.map((e) => +(100 * e.batch_acc).toFixed(1)) }] });
+    charts.push({ type: "line", title: "Loss per batch", unit: "loss", x, x_label: "step",
+      series: [{ name: "Loss", values: b.map((e) => +e.loss.toFixed(4)) }] });
+    if (b[0].lr != null) charts.push({ type: "line", title: "Learning rate", unit: "lr", x, x_label: "step",
+      series: [{ name: "Learning rate", values: b.map((e) => e.lr) }] });
+    if (b[0].grad_norm != null) charts.push({ type: "line", title: "Gradient norm", unit: "‖∇‖", x, x_label: "step",
+      series: [{ name: "Gradient L2", values: b.map((e) => +e.grad_norm.toFixed(3)) }] });
+    if (b[0].batch_acc != null) charts.push({ type: "line", title: "Batch accuracy", unit: "%", x, x_label: "step",
+      series: [{ name: "Accuracy", values: b.map((e) => +(100 * e.batch_acc).toFixed(1)) }] });
   }
   if (hist.length) {
     const ep = hist.map((h) => `ep ${h.epoch}`);
     charts.push({ type: "line", title: "Train vs validation loss", unit: "loss", x: ep,
-      series: [{ name: "Train", values: hist.map((h) => +h.train_loss.toFixed(4)) }, ...(hist[0].val_loss != null ? [{ name: "Validation", values: hist.map((h) => +h.val_loss.toFixed(4)) }] : [])] });
+      series: [
+        { name: "Train", values: hist.map((h) => +h.train_loss.toFixed(4)) },
+        ...(hist[0].val_loss != null ? [{ name: "Validation", values: hist.map((h) => +h.val_loss.toFixed(4)) }] : []),
+      ] });
     charts.push(isCls
       ? { type: "line", title: "Train vs validation accuracy", unit: "%", x: ep,
-        series: [{ name: "Train", values: hist.map((h) => +(100 * h.train_acc).toFixed(2)) }, { name: "Validation", values: hist.map((h) => +(100 * h.val_acc).toFixed(2)) }] }
+        series: [
+          { name: "Train", values: hist.map((h) => +(100 * h.train_acc).toFixed(2)) },
+          { name: "Validation", values: hist.map((h) => +(100 * h.val_acc).toFixed(2)) },
+        ] }
       : { type: "line", title: "Validation F1 / IoU", unit: "%", x: ep,
-        series: [{ name: "F1", values: hist.map((h) => +(100 * h.val_f1).toFixed(2)) }, { name: "IoU", values: hist.map((h) => +(100 * h.val_iou).toFixed(2)) }] });
+        series: [
+          { name: "F1", values: hist.map((h) => +(100 * h.val_f1).toFixed(2)) },
+          { name: "IoU", values: hist.map((h) => +(100 * h.val_iou).toFixed(2)) },
+        ] });
   }
   return (
     <div className="tab-body">
+      {cur && (
+        <dl className="live-metrics">
+          <div><dt>Loss</dt><dd>{fmt(cur.loss, 4)}</dd></div>
+          {cur.batch_acc != null && <div><dt>Accuracy</dt><dd>{pct(cur.batch_acc)}</dd></div>}
+          {cur.lr != null && <div><dt>Learning rate</dt><dd>{fmt(cur.lr, 6)}</dd></div>}
+          {cur.grad_norm != null && <div><dt>Grad norm</dt><dd>{fmt(cur.grad_norm, 3)}</dd></div>}
+        </dl>
+      )}
       {job.hyperparameters && (
         <div className="card">
           <h3 className="section-title">Hyperparameters</h3>
-          <dl className="kv">{Object.entries(job.hyperparameters).map(([k, v]) => <React.Fragment key={k}><dt>{k.replace(/_/g, " ")}</dt><dd>{String(v)}</dd></React.Fragment>)}</dl>
+          <dl className="kv">
+            {Object.entries(job.hyperparameters).map(([k, v]) => (
+              <React.Fragment key={k}><dt>{k.replace(/_/g, " ")}</dt><dd>{String(v)}</dd></React.Fragment>
+            ))}
+          </dl>
         </div>
       )}
       {charts.length === 0 ? <p className="muted">Curves appear after the first batches.</p> : <div className="studio-grid">{charts.map((c) => <Chart key={c.title} chart={c} />)}</div>}
       {hist.length > 0 && (
-        <DataTable columns={Object.keys(hist[0]).filter((k) => k !== "event" && k !== "time")}
-          rows={hist.map((h) => Object.entries(h).filter(([k]) => k !== "event" && k !== "time").map(([, v]) => (typeof v === "number" ? +v.toFixed(5) : v)))} />
+        <DataTable
+          columns={Object.keys(hist[0]).filter((k) => k !== "event" && k !== "time")}
+          rows={hist.map((h) => Object.entries(h).filter(([k]) => k !== "event" && k !== "time").map(([, v]) => (typeof v === "number" ? +v.toFixed(5) : v)))}
+        />
       )}
     </div>
   );

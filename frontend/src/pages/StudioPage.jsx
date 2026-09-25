@@ -1,11 +1,24 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { ArrowUpCircle, Download, Play, RefreshCw, Square, Trash2, Upload } from "lucide-react";
 import { api } from "../api.js";
 import { fmt } from "../layers.js";
 import { ArchitectureView, AuthImage, DatasetStats, EvaluationView, Stat, TrainingCurves } from "../components/NetworkAnalytics.jsx";
 
+const ICON = { size: 14, strokeWidth: 1.75 };
 const when = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
 const pct = (v) => (v == null ? "—" : `${(100 * v).toFixed(1)}%`);
 const statusClass = (s) => (s === "done" ? "status-done" : s === "running" ? "status-running" : "status-failed");
+
+function elapsed(start, end) {
+  if (!start) return "—";
+  const ms = Math.max(0, (end ? new Date(end) : new Date()) - new Date(start));
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
 
 // -- model registry ------------------------------------------------------------------------------
 
@@ -37,29 +50,59 @@ function Registry({ models, onChange, onOpenVersion }) {
       <div className="page-head">
         <h2>{m.title}</h2>
         <span className={`status ${m.active_checkpoint ? "status-done" : "status-queued"}`}>
-          {m.active_checkpoint ? `in production: ${m.active_checkpoint}` : "classical fallback in use"}
+          {m.active_checkpoint ? `active ${m.active_checkpoint}` : "classical fallback"}
         </span>
       </div>
       {m.versions.length === 0 ? (
-        <p className="muted small">No versions yet — train one in the Train tab, run <code>python -m training.pipeline</code>, or upload a checkpoint.</p>
+        <p className="muted small">No versions. Train in the Train tab or upload a checkpoint.</p>
       ) : (
         <table className="data-table">
           <thead>
-            <tr><th>Version</th><th>Data</th><th>{m.score.label}</th><th>Params</th><th>Source</th><th>Created</th><th /></tr>
+            <tr>
+              <th>Version</th>
+              <th>Dataset</th>
+              <th className="num">Epochs</th>
+              <th className="num">{m.score.label}</th>
+              <th>Status</th>
+              <th>Source</th>
+              <th>Created</th>
+              <th />
+            </tr>
           </thead>
           <tbody>
             {m.versions.map((v) => (
               <tr key={v.version} className={v.active ? "active-row" : ""}>
-                <td className="strong">{v.version} {v.active && <span className="badge ok">active</span>}</td>
+                <td className="mono strong">{v.version}</td>
                 <td className="small">{v.metrics.dataset_name || v.dataset || "—"}{v.metrics.pretrained === false ? " · random init" : ""}</td>
-                <td className="mono">{pct(v.metrics[m.score.key])}</td>
-                <td className="small mono">{v.metrics.epochs ? `${v.metrics.epochs} ep` : "—"}</td>
+                <td className="num">{v.metrics.epochs ?? "—"}</td>
+                <td className="num">{pct(v.metrics[m.score.key])}</td>
+                <td>{v.active ? <span className="chip ok">active</span> : <span className="chip">inactive</span>}</td>
                 <td className="small">{v.source}{v.notes ? ` · ${v.notes}` : ""}</td>
-                <td className="small">{when(v.created_at)}</td>
-                <td className="row">
-                  {v.job_id && <button className="link" onClick={() => onOpenVersion(v.job_id)}>Analytics</button>}
-                  {!v.active && <button onClick={() => act(() => api(`/models/${key}/versions/${v.version}/promote`, { method: "POST" }))}>Promote</button>}
-                  {!v.active && <button className="link danger" onClick={() => window.confirm(`Delete ${v.version}?`) && act(() => api(`/models/${key}/versions/${v.version}`, { method: "DELETE" }))}>Delete</button>}
+                <td className="small mono">{when(v.created_at)}</td>
+                <td>
+                  <div className="registry-actions">
+                    {v.job_id && <button className="link" onClick={() => onOpenVersion(v.job_id)}>Analytics</button>}
+                    {!v.active && (
+                      <button
+                        className="icon"
+                        title="Promote"
+                        aria-label={`Promote ${v.version}`}
+                        onClick={() => act(() => api(`/models/${key}/versions/${v.version}/promote`, { method: "POST" }))}
+                      >
+                        <ArrowUpCircle {...ICON} />
+                      </button>
+                    )}
+                    {!v.active && (
+                      <button
+                        className="icon"
+                        title="Delete"
+                        aria-label={`Delete ${v.version}`}
+                        onClick={() => window.confirm(`Delete ${v.version}?`) && act(() => api(`/models/${key}/versions/${v.version}`, { method: "DELETE" }))}
+                      >
+                        <Trash2 {...ICON} />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -67,13 +110,17 @@ function Registry({ models, onChange, onOpenVersion }) {
         </table>
       )}
       <div className="row wrap">
-        {m.active_checkpoint && <button onClick={() => act(() => api(`/models/${key}/deactivate`, { method: "POST" }))}>Use classical fallback</button>}
+        {m.active_checkpoint && (
+          <button onClick={() => act(() => api(`/models/${key}/deactivate`, { method: "POST" }))}>
+            Use classical fallback
+          </button>
+        )}
         <details className="upload">
-          <summary>Upload a checkpoint (e.g. from Colab)</summary>
+          <summary><Upload {...ICON} /> Upload checkpoint</summary>
           <div className="field"><label>Checkpoint (.pth)</label><input type="file" accept=".pth,.pt" onChange={(e) => setUpload({ ...upload, [key]: { ...upload[key], file: e.target.files[0] } })} /></div>
           <div className="field"><label>Metrics (.metrics.json, optional)</label><input type="file" accept=".json" onChange={(e) => setUpload({ ...upload, [key]: { ...upload[key], metrics: e.target.files[0] } })} /></div>
           <div className="field"><label>Notes</label><input value={upload[key]?.notes || ""} onChange={(e) => setUpload({ ...upload, [key]: { ...upload[key], notes: e.target.value } })} /></div>
-          <button onClick={() => send(key)}>Upload & validate</button>
+          <button onClick={() => send(key)}><Upload {...ICON} /> Upload & validate</button>
         </details>
       </div>
       {msg && <p className="small">{msg}</p>}
@@ -84,10 +131,10 @@ function Registry({ models, onChange, onOpenVersion }) {
 // -- dataset explorer ------------------------------------------------------------------------------
 
 const EXPLORE = [
-  ["synthetic", "Synthetic land-cover patches", "classifier"],
-  ["eurosat", "EuroSAT RGB", "classifier"],
-  ["synthetic_change", "Synthetic change pairs", "change"],
-  ["levir", "LEVIR-CD", "change"],
+  ["synthetic", "Synthetic land-cover"],
+  ["eurosat", "EuroSAT RGB"],
+  ["synthetic_change", "Synthetic change"],
+  ["levir", "LEVIR-CD"],
 ];
 
 function DatasetExplorer({ datasets, onRefresh }) {
@@ -123,22 +170,30 @@ function DatasetExplorer({ datasets, onRefresh }) {
 
   return (
     <div className="tab-body">
-      <div className="card row wrap">
+      <div className="card row wrap between">
         <div className="studio-tabs">
           {EXPLORE.map(([k, label]) => (
             <button key={k} className={id === k ? "active" : ""} onClick={() => setId(k)}>{label}</button>
           ))}
         </div>
-        <button className="ghost" onClick={() => explore(true)} disabled={busy}>Recompute</button>
+        <button className="ghost" onClick={() => explore(true)} disabled={busy} title="Recompute" aria-label="Recompute">
+          <RefreshCw {...ICON} /> Recompute
+        </button>
       </div>
       <div className="card row wrap between">
-        <span className="small">
-          EuroSAT: {eurosat?.available ? <b className="ok-text">downloaded</b> : eurosat?.download?.status === "running" ? `downloading — ${eurosat.download.message}` : "not downloaded"}
-          {eurosat?.download?.status === "failed" && <span className="danger"> ({eurosat.download.message.split("\n")[0]})</span>}
-          {" · "}LEVIR-CD: {levir?.available ? <b>imported</b> : <>not imported — <code>python -m training.download_data levir --from &lt;zip&gt;</code></>}
-        </span>
+        <dl className="kv" style={{ flex: 1 }}>
+          <dt>EuroSAT</dt>
+          <dd>
+            {eurosat?.available ? "downloaded" : eurosat?.download?.status === "running" ? `downloading — ${eurosat.download.message}` : "not downloaded"}
+            {eurosat?.download?.status === "failed" && <span className="danger"> ({eurosat.download.message.split("\n")[0]})</span>}
+          </dd>
+          <dt>LEVIR-CD</dt>
+          <dd>{levir?.available ? "imported" : <>not imported — <code>python -m training.download_data levir --from &lt;zip&gt;</code></>}</dd>
+        </dl>
         {!eurosat?.available && eurosat?.download?.status !== "running" && (
-          <button onClick={async () => { await api("/training/datasets/eurosat/download", { method: "POST" }); onRefresh(); }}>Download EuroSAT (~90 MB)</button>
+          <button onClick={async () => { await api("/training/datasets/eurosat/download", { method: "POST" }); onRefresh(); }}>
+            <Download {...ICON} /> Download EuroSAT (~90 MB)
+          </button>
         )}
       </div>
       {busy && <p className="progress-line"><span className="spinner" /> Computing dataset statistics…</p>}
@@ -179,7 +234,7 @@ function TrainForm({ datasets, onStarted }) {
 
   return (
     <form className="card train-form" onSubmit={submit}>
-      <h2>Train a model</h2>
+      <h2>Train</h2>
       <div className="studio-tabs">
         {Object.entries(PRESETS).map(([k, p]) => (
           <button type="button" key={k} onClick={() => setF({ ...p, pretrained: true })} className={f.label === p.label ? "active" : ""}>{p.label}</button>
@@ -208,11 +263,11 @@ function TrainForm({ datasets, onStarted }) {
         ) : (
           <div className="field"><label htmlFor="t-max">Max samples (0 = all)</label><input id="t-max" type="number" min={0} value={f.max_samples} onChange={set("max_samples")} /></div>
         )}
-        <div className="field field-check"><label htmlFor="t-pre">ImageNet initialisation (transfer learning)</label><input id="t-pre" type="checkbox" checked={f.pretrained} onChange={set("pretrained")} /></div>
+        <div className="field field-check"><label htmlFor="t-pre">ImageNet initialisation</label><input id="t-pre" type="checkbox" checked={f.pretrained} onChange={set("pretrained")} /></div>
       </div>
       {chosen && <p className="hint">{chosen.how}</p>}
       {error && <div className="error">{error}</div>}
-      <button className="primary">Start training</button>
+      <button className="primary"><Play {...ICON} /> Start training</button>
     </form>
   );
 }
@@ -248,22 +303,32 @@ function JobDetail({ id, onFinished }) {
   const cur = job.progress.current;
   return (
     <section className="card">
-      <div className="page-head">
-        <h2>Job #{job.id} · {isCls ? "ResNet-50 classifier" : "Siamese U-Net"} on {job.dataset}</h2>
-        <span className={`status ${statusClass(job.status)}`}>{job.status}{job.version ? ` → ${job.version}` : ""}</span>
+      <div className="job-head">
+        <h2>Job #{job.id}</h2>
+        <span className={`status ${statusClass(job.status)}`}>
+          {job.status}{job.version ? ` → ${job.version}` : ""}
+        </span>
       </div>
       <div className="progress" aria-label="Training progress"><div style={{ width: `${100 * job.progress.fraction}%` }} /></div>
-      <div className="stat-row">
-        <Stat label="Epoch" value={`${job.progress.epochs_done}/${job.progress.epochs_total}`} note={cur ? `step ${cur.step}/${job.progress.steps_per_epoch}` : ""} />
-        <Stat label="Current loss" value={cur ? fmt(cur.loss, 4) : "—"} />
-        <Stat label={isCls ? "Best val accuracy" : "Best val F1"} value={job.history.length ? pct(Math.max(...job.history.map((h) => (isCls ? h.val_acc : h.val_f1)))) : "—"} />
-        <Stat label="Parameters" value={job.params_count ? `${(job.params_count / 1e6).toFixed(1)} M` : "—"} />
+      <div className="readout">
+        <Stat label="Model" value={isCls ? "ResNet-50" : "Siamese U-Net"} />
+        <Stat label="Dataset" value={job.dataset} />
         <Stat label="Device" value={job.progress.device || "—"} note={job.progress.pretrained == null ? "" : job.progress.pretrained ? "ImageNet init" : "random init"} />
+        <Stat label="Params" value={job.params_count ? `${(job.params_count / 1e6).toFixed(1)} M` : "—"} />
+        <Stat label="Epoch" value={`${job.progress.epochs_done}/${job.progress.epochs_total}`} note={cur ? `step ${cur.step}/${job.progress.steps_per_epoch}` : ""} />
+        <Stat label="Elapsed" value={elapsed(job.started_at || job.created_at, job.finished_at)} />
+        {job.history.length > 0 && (
+          <Stat label={isCls ? "Best val accuracy" : "Best val F1"} value={pct(Math.max(...job.history.map((h) => (isCls ? h.val_acc : h.val_f1))))} />
+        )}
         {job.result && <Stat label={isCls ? "Test accuracy" : "Test F1"} value={pct(isCls ? job.result.test_acc : job.result.test.f1)} />}
       </div>
       {job.warnings.map((w) => <div key={w} className="warn small">{w}</div>)}
       {job.error && <div className="error">{job.error}</div>}
-      {job.status === "running" && <button onClick={() => api(`/training/jobs/${job.id}/cancel`, { method: "POST" })}>Cancel</button>}
+      {job.status === "running" && (
+        <button onClick={() => api(`/training/jobs/${job.id}/cancel`, { method: "POST" })}>
+          <Square {...ICON} /> Cancel
+        </button>
+      )}
       <div className="tabs" role="tablist">
         {JOB_TABS.map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{label}</button>)}
       </div>
@@ -273,18 +338,18 @@ function JobDetail({ id, onFinished }) {
       {tab === "visuals" && (
         a.images?.length ? (
           <div className="tab-body">
-            {a.images.includes("filters.png") && <div className="card"><h3 className="section-title">First-layer filters</h3><AuthImage path={art("filters.png")} alt="Learned filters" /><p className="hint">Each tile is one learned 7×7×3 kernel. Early filters become edge, colour-contrast and texture detectors.</p></div>}
-            {a.images.includes("feature_maps.png") && <div className="card"><h3 className="section-title">Feature maps</h3><AuthImage path={art("feature_maps.png")} alt="Feature maps" /><p className="hint">Activations of the most active channels for one test image: what the network "sees" after its first residual stage.</p></div>}
-            {a.images.includes("predictions.png") && <div className="card"><h3 className="section-title">Predictions on unseen test data</h3><AuthImage path={art("predictions.png")} alt="Predictions" /></div>}
-            {a.images.includes("confusion_matrix.png") && <div className="card"><h3 className="section-title">Confusion matrix (figure)</h3><AuthImage path={art("confusion_matrix.png")} alt="Confusion matrix" /></div>}
-            {a.images.includes("training_curves.png") && <div className="card"><h3 className="section-title">Training curves (figure for slides)</h3><AuthImage path={art("training_curves.png")} alt="Training curves" /></div>}
+            {a.images.includes("filters.png") && <div className="card"><h3 className="section-title">First-layer filters</h3><div className="sample-frame"><AuthImage path={art("filters.png")} alt="Learned filters" /></div></div>}
+            {a.images.includes("feature_maps.png") && <div className="card"><h3 className="section-title">Feature maps</h3><div className="sample-frame"><AuthImage path={art("feature_maps.png")} alt="Feature maps" /></div></div>}
+            {a.images.includes("predictions.png") && <div className="card"><h3 className="section-title">Predictions</h3><div className="sample-frame"><AuthImage path={art("predictions.png")} alt="Predictions" /></div></div>}
+            {a.images.includes("confusion_matrix.png") && <div className="card"><h3 className="section-title">Confusion matrix</h3><div className="sample-frame"><AuthImage path={art("confusion_matrix.png")} alt="Confusion matrix" /></div></div>}
+            {a.images.includes("training_curves.png") && <div className="card"><h3 className="section-title">Training curves</h3><div className="sample-frame"><AuthImage path={art("training_curves.png")} alt="Training curves" /></div></div>}
           </div>
         ) : <p className="muted">Figures are generated when training finishes.</p>
       )}
       {tab === "dataset" && (a.dataset ? <DatasetStats stats={a.dataset} imagePath={a.images?.includes("dataset_samples.png") ? art("dataset_samples.png") : null} /> : <p className="muted">Dataset statistics appear once data is loaded.</p>)}
       {tab === "log" && (
         <div className="tab-body">
-          {job.info?.map((m, i) => <div key={i} className="small muted">› {m}</div>)}
+          {job.info?.map((m, i) => <div key={i} className="small muted">{m}</div>)}
           <pre className="json log">{job.log || "…"}</pre>
         </div>
       )}
@@ -294,7 +359,7 @@ function JobDetail({ id, onFinished }) {
 
 // -- page ---------------------------------------------------------------------------------------------------
 
-const TABS = [["models", "Models"], ["data", "Dataset explorer"], ["train", "Train"], ["jobs", "Jobs & analytics"]];
+const TABS = [["models", "Models"], ["data", "Dataset explorer"], ["train", "Train"], ["jobs", "Jobs"]];
 
 export default function StudioPage() {
   const [tab, setTab] = useState("models");
@@ -323,10 +388,7 @@ export default function StudioPage() {
   return (
     <div className="page">
       <div className="page-head">
-        <div>
-          <h1>Training studio</h1>
-          <p className="muted">Explore the data, train the networks, inspect what they learned, and promote the best version to production.</p>
-        </div>
+        <h1>Training studio</h1>
       </div>
       <div className="tabs" role="tablist">
         {TABS.map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{label}</button>)}
@@ -336,17 +398,28 @@ export default function StudioPage() {
       {tab === "train" && <TrainForm datasets={datasets} onStarted={(id) => { load(); open(id); }} />}
       {tab === "jobs" && (
         <div className="tab-body">
-          {jobs.length === 0 ? <p className="muted">No training jobs yet — start one in the Train tab.</p> : (
+          {jobs.length === 0 ? <p className="muted">No training jobs yet.</p> : (
             <section className="card">
               <table className="data-table">
-                <thead><tr><th>#</th><th>Model</th><th>Data</th><th>Status</th><th>Progress</th><th>Started</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th className="num">#</th>
+                    <th>Model</th>
+                    <th>Dataset</th>
+                    <th>Status</th>
+                    <th className="num">Progress</th>
+                    <th>Started</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {jobs.map((j) => (
                     <tr key={j.id} className={j.id === selected ? "active-row" : ""} onClick={() => setSelected(j.id)} style={{ cursor: "pointer" }}>
-                      <td>{j.id}</td><td>{j.model.replace("_", " ")}</td><td>{j.dataset}</td>
+                      <td className="num">{j.id}</td>
+                      <td>{j.model.replace("_", " ")}</td>
+                      <td>{j.dataset}</td>
                       <td><span className={`status ${statusClass(j.status)}`}>{j.status}</span></td>
-                      <td className="mono">{Math.round(100 * j.progress.fraction)}%{j.version ? ` → ${j.version}` : ""}</td>
-                      <td className="small">{when(j.created_at)}</td>
+                      <td className="num">{Math.round(100 * j.progress.fraction)}%{j.version ? ` → ${j.version}` : ""}</td>
+                      <td className="small mono">{when(j.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
