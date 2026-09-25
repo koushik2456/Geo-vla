@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Search } from "lucide-react";
 import { api } from "../api.js";
 
 /** Search villages, cities, districts, lakes, forests; selecting sets the analysis area. */
@@ -38,8 +39,9 @@ export default function PlaceSearch({ onSelect }) {
   };
 
   return (
-    <div className="place-search">
-      <input type="search" value={q} placeholder="Search a place — village, city, lake, forest…" aria-label="Search a place"
+    <div className="place-search glass">
+      <Search size={14} strokeWidth={1.75} className="place-search-icon" aria-hidden="true" />
+      <input type="search" value={q} placeholder="Place, district, lake…" aria-label="Search a place"
         onChange={(e) => setQ(e.target.value)} onFocus={() => results.length && setOpen(true)}
         onKeyDown={(e) => e.key === "Enter" && results[0] && choose(results[0])} />
       {busy && <span className="spinner" aria-hidden="true" />}
@@ -51,7 +53,7 @@ export default function PlaceSearch({ onSelect }) {
               <span>{r.label}</span>
               <em>
                 {r.type}
-                {r.clipped ? " · centre area" : ""}
+                {r.clipped ? " · centre" : ""}
               </em>
             </li>
           ))}

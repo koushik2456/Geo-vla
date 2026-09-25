@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Pause, Play } from "lucide-react";
 
 const LABELS = { scene: "Imagery", scalar: "NDVI", classmap: "Land cover" };
 
@@ -25,12 +26,12 @@ export default function TimelapsePlayer({ groups, onShow }) {
   if (!frames.length) return null;
   const current = frames[Math.min(index, frames.length - 1)];
   return (
-    <div className="timelapse" role="group" aria-label="Timelapse">
-      <button onClick={() => setPlaying((p) => !p)} aria-label={playing ? "Pause" : "Play"}>
-        {playing ? "❚❚" : "▶"}
+    <div className="timelapse glass" role="group" aria-label="Timelapse">
+      <button className="icon" onClick={() => setPlaying((p) => !p)} aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause" : "Play"}>
+        {playing ? <Pause size={14} strokeWidth={1.75} aria-hidden="true" /> : <Play size={14} strokeWidth={1.75} aria-hidden="true" />}
       </button>
       <input type="range" min={0} max={frames.length - 1} value={index} onChange={(e) => setIndex(Number(e.target.value))} aria-label="Frame" />
-      <span className="timelapse-date">{current.meta.date}</span>
+      <span className="timelapse-date mono">{current.meta.date}</span>
       {kinds.length > 1 && (
         <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Timelapse layer">
           {kinds.map((k) => (

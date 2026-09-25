@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Archive, FileDown, FileText } from "lucide-react";
 import { api, download } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { Chart, KeyFigures } from "./Charts.jsx";
@@ -18,7 +19,7 @@ function SaveShare({ run, onChanged }) {
     if (user && run.can_edit) api("/projects").then(setProjects).catch(() => {});
   }, [user, run.can_edit]);
 
-  if (!user) return <p className="muted small">Sign in to save this analysis to a project or share it.</p>;
+  if (!user) return <p className="hint">Sign in to save or share.</p>;
   if (!run.can_edit) return null;
   const shareUrl = run.share_token ? `${window.location.origin}${window.location.pathname}#/share/${run.share_token}` : null;
 
@@ -73,7 +74,7 @@ function SaveShare({ run, onChanged }) {
             <button onClick={() => share(false)}>Revoke</button>
           </>
         ) : (
-          <button onClick={() => share(true)}>Create public link</button>
+          <button onClick={() => share(true)}>Public link</button>
         )}
       </div>
     </div>
@@ -93,12 +94,16 @@ function Exports({ run, share }) {
   const short = run.id.slice(0, 8);
   return (
     <div className="exports">
-      <div className="row">
-        <button className="primary" disabled={busy} onClick={() => get("pdf", `/runs/${run.id}/report.pdf`, `geo-vla-report-${short}.pdf`)}>
+      <div className="row export-actions">
+        <button className="primary" disabled={busy} onClick={() => get("pdf", `/runs/${run.id}/report.pdf`, `geo-vla-report-${short}.pdf`)}
+          title="PDF report" aria-label="PDF report">
+          <FileText size={14} strokeWidth={1.75} aria-hidden="true" />
           {busy === "pdf" ? "Preparing…" : "PDF report"}
         </button>
-        <button disabled={busy} onClick={() => get("zip", `/runs/${run.id}/export.zip`, `geo-vla-${short}.zip`)}>
-          {busy === "zip" ? "Preparing…" : "Everything (ZIP)"}
+        <button disabled={busy} onClick={() => get("zip", `/runs/${run.id}/export.zip`, `geo-vla-${short}.zip`)}
+          title="Export ZIP" aria-label="Export ZIP">
+          <Archive size={14} strokeWidth={1.75} aria-hidden="true" />
+          {busy === "zip" ? "Preparing…" : "ZIP"}
         </button>
       </div>
       <table className="data-table">
@@ -114,12 +119,16 @@ function Exports({ run, share }) {
               <td>{l.name}</td>
               <td className="dl">
                 {l.downloads.geotiff && (
-                  <button className="link" onClick={() => get(l.id + "tif", l.downloads.geotiff, `${l.id}.tif`)}>
+                  <button className="link" onClick={() => get(l.id + "tif", l.downloads.geotiff, `${l.id}.tif`)}
+                    title="Export GeoTIFF" aria-label={`Export GeoTIFF ${l.name}`}>
+                    <FileDown size={14} strokeWidth={1.75} aria-hidden="true" />
                     GeoTIFF
                   </button>
                 )}
                 {l.downloads.geojson && (
-                  <button className="link" onClick={() => get(l.id + "gj", l.downloads.geojson, `${l.id}.geojson`)}>
+                  <button className="link" onClick={() => get(l.id + "gj", l.downloads.geojson, `${l.id}.geojson`)}
+                    title="Export GeoJSON" aria-label={`Export GeoJSON ${l.name}`}>
+                    <FileDown size={14} strokeWidth={1.75} aria-hidden="true" />
                     GeoJSON
                   </button>
                 )}
@@ -128,7 +137,7 @@ function Exports({ run, share }) {
           ))}
         </tbody>
       </table>
-      <p className="muted small">GeoTIFF and GeoJSON open in QGIS, ArcGIS and Google Earth Pro (EPSG:4326).</p>
+      <p className="hint">EPSG:4326 · QGIS, ArcGIS, Google Earth Pro</p>
     </div>
   );
 }
@@ -147,11 +156,11 @@ export default function ResultPanel({ run, share, onChanged }) {
 
   return (
     <section className="result">
-      <header>
+      <header className="result-head">
         <h2>{run.title}</h2>
         <span className={`status status-${run.status}`}>{STATUS[run.status]}</span>
       </header>
-      {run.place && <p className="muted small">{run.place}</p>}
+      {run.place && <p className="muted small mono">{run.place}</p>}
       <div className="tabs" role="tablist">
         {tabs.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}
@@ -168,7 +177,7 @@ export default function ResultPanel({ run, share, onChanged }) {
               <span className="spinner" aria-hidden="true" /> {steps ? `Step ${steps}: ${run.trace.findLast((t) => t.type === "tool_call")?.tool}` : "Planning…"}
             </p>
           )}
-          {run.status === "failed" && <div className="error">The analysis failed: {run.error}</div>}
+          {run.status === "failed" && <div className="error">{run.error}</div>}
           {run.status === "done" && (
             <>
               {run.data_mode === "synthetic" && <div className="warn">Demonstration data — synthetic imagery. Not for decisions.</div>}
@@ -178,8 +187,8 @@ export default function ResultPanel({ run, share, onChanged }) {
                   <p key={i}>{line}</p>
                 ))}
               </div>
-              <p className="meta">
-                {run.planner === "workflow" ? "Fixed workflow" : run.planner === "llm" || run.planner === "claude" ? run.model : "Offline planner"} · {steps} steps · data {run.data_mode}
+              <p className="meta mono">
+                {run.planner === "workflow" ? "workflow" : run.planner === "llm" || run.planner === "claude" ? run.model : "offline"} · {steps} steps · {run.data_mode}
               </p>
               <SaveShare run={run} onChanged={onChanged} />
             </>
@@ -193,7 +202,7 @@ export default function ResultPanel({ run, share, onChanged }) {
             <Chart key={i} chart={c} />
           ))}
           {ins.methods?.length > 0 && (
-            <p className="muted small">Methods: {ins.methods.join("; ")}</p>
+            <p className="hint">Methods: {ins.methods.join("; ")}</p>
           )}
         </div>
       )}

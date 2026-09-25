@@ -17,10 +17,10 @@ export default function TracePanel({ trace, running }) {
               <li key={i} className={`tool ${item.is_error ? "failed" : ""}`}>
                 <details>
                   <summary>
-                    <span className="step">{step}</span>
-                    <code>{item.tool}</code>
-                    <span className="duration">{item.duration_ms} ms</span>
-                    {item.is_error && <span className="badge">error</span>}
+                    <span className="step mono">{String(step).padStart(2, "0")}</span>
+                    <code className="tool-name">{item.tool}</code>
+                    <span className="duration mono">{item.duration_ms} ms</span>
+                    {item.is_error && <span className="chip bad">error</span>}
                   </summary>
                   <div className="io">
                     <h3>input</h3>
