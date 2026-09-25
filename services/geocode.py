@@ -156,8 +156,11 @@ def nominatim_reverse(lon: float, lat: float) -> dict:
     for k, ours in _NOMINATIM_COMPONENTS.items():
         if k in addr:
             comps.setdefault(ours, addr[k])
+    area = comps.get("suburb") or comps.get("locality") or comps.get("subdistrict")
+    feature = r.get("name") or None
     return {"source": "OpenStreetMap Nominatim", "formatted_address": r.get("display_name", ""),
-            "name": r.get("name") or comps.get("locality") or r.get("display_name", "").split(",")[0],
+            "name": area or feature or r.get("display_name", "").split(",")[0],
+            "nearest_feature": feature if feature and feature != area else None,
             "components": comps, "plus_code": None, "types": [t for t in (r.get("category"), r.get("type")) if t]}
 
 

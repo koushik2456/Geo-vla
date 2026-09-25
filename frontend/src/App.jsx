@@ -88,15 +88,15 @@ function Shell() {
           {health?.status === "ok" && (
             <div className="sys-status" aria-label="System status">
               <span title={{ synthetic: "Synthetic demo world (GEO_VLA_DATA_MODE=synthetic)", missing: "Live mode, but no Sentinel-2 credentials: add COPERNICUS_CLIENT_ID/SECRET to .env" }[health.imagery_source] ?? `Sentinel-2 via ${health.imagery_source}`}>
-                <i className={`dot ${{ synthetic: "warn", missing: "bad" }[health.imagery_source] ?? "ok"}`} />
+                <i className={`dot dot-${{ synthetic: "warn", missing: "bad" }[health.imagery_source] ?? "ok"}`} />
                 {{ synthetic: "S2 demo", missing: "S2 no key" }[health.imagery_source] ?? `S2 ${health.imagery_source}`}
               </span>
               <span title={health.model || "Rule-based planner"}>
-                <i className={`dot ${health.planner === "llm" ? "ok" : "warn"}`} />
+                <i className={`dot dot-${health.planner === "llm" ? "ok" : "warn"}`} />
                 {health.planner === "llm" ? `LLM ${health.provider}` : "LLM off"}
               </span>
               <span title="Active land-cover model">
-                <i className={`dot ${health.checkpoints?.classifier ? "ok" : "warn"}`} />
+                <i className={`dot dot-${health.checkpoints?.classifier ? "ok" : "warn"}`} />
                 CNN {health.checkpoints?.classifier ?? "none"}
               </span>
             </div>

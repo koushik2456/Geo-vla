@@ -115,6 +115,7 @@ function LocationSection({ info, point, onAnalyze }) {
         <dd>{fmtLatLon(lat, lon)}</dd>
         {info?.utm && (<><dt>UTM</dt><dd>zone {info.utm.zone} · EPSG:{info.utm.epsg}</dd></>)}
         {place?.plus_code && (<><dt>Plus code</dt><dd>{place.plus_code}</dd></>)}
+        {place?.nearest_feature && (<><dt>Nearest</dt><dd>{place.nearest_feature}</dd></>)}
         {place && (<><dt>Source</dt><dd className="small muted" style={{ fontFamily: "var(--font)" }}>{place.source}</dd></>)}
       </dl>
       <div className="xp-actions">
