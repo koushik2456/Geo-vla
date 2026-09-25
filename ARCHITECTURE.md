@@ -264,7 +264,7 @@ hashes, counts, recomputed numbers) before it is merged or reported.
 | 2026-09-25 | Real OpenStreetMap, Bellandur Lake (77.64-77.70 E, 12.91-12.96 N) | 158 water features, 564 major roads, 18,936 buildings | live Overpass |
 | 2026-09-25 | Real Copernicus DEM, same area | 858-919 m elevation (Bengaluru is ~900 m) | AWS COGs |
 | 2026-09-25 | EuroSAT RGB dataset verified | 27,000 images, 10 classes, all 64x64 RGB; file-list SHA-256 75eda203... | `data/eurosat/VERIFY.json` |
-| 2026-09-25 | EuroSAT classifier, development run (validation only) | pending | — |
+| 2026-09-25 | EuroSAT classifier v1, development run (validation only; ResNet-50 ImageNet init, 224 px, 10 epochs, RTX 5070 Ti, 24.7 min) | val accuracy 0.9867, macro-F1 0.9859, lowest class recall 0.970 (HerbaceousVegetation / Pasture); main confusions among vegetation classes. Optimistic: epoch chosen on this split. Promoted. | `data/training_jobs/1/analytics`, registry v1 sha256 6a81f77b... |
 | — | EuroSAT test-split confirmation | not run (awaiting approval) | `eval/confirmation/classifier-eurosat/` |
 
 ---
@@ -277,4 +277,5 @@ hashes, counts, recomputed numbers) before it is merged or reported.
   Sentinel-2 (0.5 m vs 10 m); fine-tuning on OSCD (10 m) is the right next step.
 - **EuroSAT is European imagery**; accuracy on Indian landscapes is UNKNOWN until checked against labelled Indian
   patches.
+- Training epochs take ~150 s, not the ~60 s the GPU could manage: on Windows the data loaders run in the main process (the loaders are lambdas, which worker processes cannot receive). Making them picklable would cut EuroSAT training to about 10 minutes.
 - LLM planner not yet exercised against a live provider in this environment (needs `GROQ_API_KEY`).
