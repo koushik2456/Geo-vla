@@ -5,7 +5,10 @@ Geo-VLA degrades gracefully so the full pipeline can be demoed with no
 credentials and no trained checkpoints:
 
   * No LLM key (Groq, OpenRouter, Together, Ollama, Anthropic, …) -> offline rule-based planner
-  * No COPERNICUS_CLIENT_ID/SECRET or EE_PROJECT -> synthetic Sentinel-2, DEM and OSM data
+  * Elevation (Copernicus DEM on AWS) and OpenStreetMap are always real and need no key
+  * Sentinel-2 needs COPERNICUS_CLIENT_ID/SECRET or EE_PROJECT; without them, imagery steps fail
+    with a clear message (no silent synthetic substitute)
+  * GEO_VLA_DATA_MODE=synthetic or GEO_VLA_OFFLINE=1 -> the synthetic demo world (tests, offline demos)
   * No .pth checkpoints          -> classical fallbacks (spectral rules, CVA)
 
 Every fallback is labelled in the tool output, so the reasoning trace always
@@ -131,19 +134,28 @@ def imagery_source() -> str:
     return "earthengine" if earthengine_configured() else "copernicus"
 
 
-# Data mode: "live" (Sentinel-2 + Copernicus DEM + OpenStreetMap over the network)
-# or "synthetic" (deterministic offline world from synthetic.py). All three
-# sources switch together so layers from different tools stay spatially consistent.
-# "auto" = live when Copernicus credentials are present.
-_DATA_MODE = os.getenv("GEO_VLA_DATA_MODE", "auto").strip().lower()
+# Data mode: "live" (default: real Sentinel-2, Copernicus DEM and OpenStreetMap over the network)
+# or "synthetic" (the deterministic offline world from synthetic.py, only when asked for explicitly
+# or in tests). All sources switch together so layers from different tools stay spatially consistent,
+# which is why live mode never falls back to synthetic imagery when credentials are missing.
+_DATA_MODE = os.getenv("GEO_VLA_DATA_MODE", "live").strip().lower()
 
 
 def data_mode() -> str:
-    if OFFLINE:
+    if OFFLINE or _DATA_MODE == "synthetic":
         return "synthetic"
-    if _DATA_MODE in {"live", "synthetic"}:
-        return _DATA_MODE
-    return "live" if (copernicus_configured() or earthengine_configured()) else "synthetic"
+    return "live"
+
+
+def imagery_configured() -> bool:
+    return copernicus_configured() or earthengine_configured()
+
+
+def imagery_status() -> str:
+    """For the UI: copernicus | earthengine | missing (live mode, no credentials) | synthetic."""
+    if data_mode() == "synthetic":
+        return "synthetic"
+    return imagery_source() if imagery_configured() else "missing"
 
 
 def data_live() -> bool:

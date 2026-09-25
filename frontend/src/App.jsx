@@ -87,9 +87,9 @@ function Shell() {
         <div className="topbar-right">
           {health?.status === "ok" && (
             <div className="sys-status" aria-label="System status">
-              <span title={health.imagery_source === "synthetic" ? "No satellite credentials: synthetic imagery" : `Sentinel-2 via ${health.imagery_source}`}>
-                <i className={`dot ${health.data_mode === "live" ? "ok" : "warn"}`} />
-                {health.data_mode === "live" ? `S2 ${health.imagery_source}` : "S2 demo"}
+              <span title={{ synthetic: "Synthetic demo world (GEO_VLA_DATA_MODE=synthetic)", missing: "Live mode, but no Sentinel-2 credentials: add COPERNICUS_CLIENT_ID/SECRET to .env" }[health.imagery_source] ?? `Sentinel-2 via ${health.imagery_source}`}>
+                <i className={`dot ${{ synthetic: "warn", missing: "bad" }[health.imagery_source] ?? "ok"}`} />
+                {{ synthetic: "S2 demo", missing: "S2 no key" }[health.imagery_source] ?? `S2 ${health.imagery_source}`}
               </span>
               <span title={health.model || "Rule-based planner"}>
                 <i className={`dot ${health.planner === "llm" ? "ok" : "warn"}`} />

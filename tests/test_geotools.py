@@ -144,3 +144,45 @@ def test_tool_schemas_are_well_formed():
     for s in schemas:
         assert s["input_schema"]["type"] == "object"
         assert set(s["input_schema"]["required"]) <= set(s["input_schema"]["properties"])
+
+
+def test_live_mode_without_imagery_credentials_refuses_instead_of_faking(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "OFFLINE", False)
+    monkeypatch.setattr(config, "_DATA_MODE", "live")
+    monkeypatch.setattr(config, "COPERNICUS_CLIENT_ID", "")
+    monkeypatch.setattr(config, "EE_PROJECT", "")
+    assert config.data_mode() == "live" and config.imagery_status() == "missing"
+    ws = g.Workspace([77.60, 12.90, 77.64, 12.94])
+    with pytest.raises(g.ToolError, match="COPERNICUS_CLIENT_ID"):
+        g.fetch_sentinel2_scene(ws, "2024-01-01")
+    assert "s2_2024-01-01" not in ws.layers
+
+
+def test_overpass_tries_mirrors_then_caches(monkeypatch, tmp_path):
+    calls = []
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code = code
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"elements": [{"geometry": [{"lon": 77.6, "lat": 12.9}, {"lon": 77.61, "lat": 12.91}], "tags": {}}]}
+
+    def post(url, **_):
+        calls.append(url)
+        return Resp(504 if "overpass-api.de" in url else 200)
+
+    monkeypatch.setattr(g, "OSM_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(g, "OVERPASS_URLS", ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"])
+    monkeypatch.setattr(g.requests, "post", post)
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    assert len(g.fetch_osm_geometries([77.6, 12.9, 77.62, 12.92], "roads")) == 1
+    assert calls == ["https://overpass-api.de/api/interpreter"] * 2 + ["https://overpass.kumi.systems/api/interpreter"]
+    assert len(g.fetch_osm_geometries([77.6, 12.9, 77.62, 12.92], "roads")) == 1 and len(calls) == 3   # cached
+    monkeypatch.setattr(g.requests, "post", lambda url, **_: Resp(504))
+    with pytest.raises(g.ToolError, match="Overpass"):
+        g.fetch_osm_geometries([77.0, 12.0, 77.02, 12.02], "water")

@@ -13,6 +13,7 @@ data/eurosat/*
 data/levir_cd/*
 data/dem_cache/*
 data/imagery_cache/*
+data/osm_cache/*
 !data/**/.gitkeep
 models/checkpoints/*.pth
 eval/results*.json

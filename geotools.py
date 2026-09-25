@@ -166,7 +166,14 @@ COPERNICUS_TOKEN_URL = (
     "/protocol/openid-connect/token"
 )
 COPERNICUS_PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
-OVERPASS_URL = os.getenv("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
+# Public Overpass servers are often overloaded (HTTP 429/504), so try several and cache answers.
+OVERPASS_URLS = [u for u in dict.fromkeys([
+    os.getenv("OVERPASS_URL"),
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]) if u]
+OSM_CACHE_DIR = os.getenv("OSM_CACHE_DIR", "./data/osm_cache")
 
 _token_cache = {"token": None, "expires": 0.0}
 
@@ -296,6 +303,9 @@ def _bands_to_rgb(bands: dict) -> np.ndarray:
 def fetch_sentinel2_scene(ws: Workspace, date: str, bbox=None, window_days: int = 20, max_cloud_pct: int = 30) -> dict:
     bbox = ws.bbox(bbox)
     shape = grid_shape(bbox, S2_RESOLUTION_M)
+    if config.data_live() and not config.imagery_configured():
+        raise ToolError("Sentinel-2 imagery needs credentials: set COPERNICUS_CLIENT_ID and COPERNICUS_CLIENT_SECRET "
+                        "(free at dataspace.copernicus.eu) or EE_PROJECT (Google Earth Engine) in .env")
     if config.data_live() and config.imagery_source() == "earthengine":
         bands, scenes = fetch_sentinel2_bands_ee(bbox, date, window_days, max_cloud_pct, shape)
         source = f"Google Earth Engine — Sentinel-2 L2A (cloud-masked median of {scenes} scenes)"
@@ -413,17 +423,45 @@ _OSM_QUERIES = {
 }
 
 
+def _overpass_elements(bbox, feature_type: str) -> list:
+    """Raw Overpass elements, from the disk cache or the first server that answers."""
+    cache = os.path.join(OSM_CACHE_DIR, hashlib.sha256(json.dumps([feature_type, bbox]).encode()).hexdigest()[:16] + ".json")
+    if os.path.exists(cache):
+        with open(cache, encoding="utf-8") as f:
+            return json.load(f)
+    w, s, e, n = bbox
+    query = f"[out:json][timeout:60];({_OSM_QUERIES[feature_type].format(s=s, w=w, n=n, e=e)});out geom;"
+    errors = []
+    for url in OVERPASS_URLS:
+        for attempt in range(2):
+            try:
+                resp = requests.post(url, data={"data": query}, timeout=(10, 45),
+                                     headers={"User-Agent": "Geo-VLA geospatial decision support (research)"})
+                if resp.status_code in (429, 502, 503, 504):
+                    raise requests.HTTPError(f"HTTP {resp.status_code}")
+                resp.raise_for_status()
+                elements = resp.json().get("elements", [])
+            except requests.Timeout as exc:  # a slow server rarely recovers within seconds: try the next one
+                errors.append(f"{url.split('/')[2]}: timeout ({exc.__class__.__name__})")
+                break
+            except (requests.RequestException, ValueError) as exc:
+                errors.append(f"{url.split('/')[2]}: {exc}")
+                time.sleep(2 * (attempt + 1))
+                continue
+            os.makedirs(OSM_CACHE_DIR, exist_ok=True)
+            with open(cache, "w", encoding="utf-8") as f:
+                json.dump(elements, f)
+            return elements
+    raise ToolError("OpenStreetMap (Overpass) is unavailable right now: " + "; ".join(errors[-3:]) +
+                    ". Try again in a minute or use a smaller area.")
+
+
 def fetch_osm_geometries(bbox, feature_type: str) -> list:
     """OSM ways from the Overpass API as shapely geometries (lon/lat)."""
     from shapely.geometry import LineString, Polygon
 
-    w, s, e, n = bbox
-    query = f"[out:json][timeout:60];({_OSM_QUERIES[feature_type].format(s=s, w=w, n=n, e=e)});out geom;"
-    resp = requests.post(OVERPASS_URL, data={"data": query}, timeout=90,
-                         headers={"User-Agent": "Geo-VLA research prototype"})
-    resp.raise_for_status()
     geoms = []
-    for el in resp.json().get("elements", []):
+    for el in _overpass_elements(bbox, feature_type):
         coords = [(p["lon"], p["lat"]) for p in el.get("geometry", [])]
         if len(coords) < 2:
             continue

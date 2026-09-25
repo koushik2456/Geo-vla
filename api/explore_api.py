@@ -22,7 +22,7 @@ def client_config():
         "geocoder": "google" if config.GOOGLE_GEOCODING_KEY and not config.OFFLINE
         else ("nominatim" if not config.OFFLINE else "gazetteer"),
         "data_mode": config.data_mode(),
-        "imagery_source": config.imagery_source() if config.data_live() else "synthetic",
+        "imagery_source": config.imagery_status(),
     }
 
 

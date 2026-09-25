@@ -110,7 +110,7 @@ def health():
         "provider": (config.llm_settings() or {}).get("provider"),
         "model": (config.llm_settings() or {}).get("model"),
         "data_mode": config.data_mode(),
-        "imagery_source": config.imagery_source() if config.data_live() else "synthetic",
+        "imagery_source": config.imagery_status(),
         "checkpoints": {
             "classifier": geotools.model_version("classifier"),
             "change_detector": geotools.model_version("change"),

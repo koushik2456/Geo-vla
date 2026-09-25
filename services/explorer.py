@@ -61,7 +61,7 @@ def point_info(lon: float, lat: float) -> dict:
         elevation = {"m": None, "error": str(exc)}
     return {"lon": lon, "lat": lat, "place": geocode.reverse(lon, lat), "elevation": elevation,
             "utm": utm_zone(lon, lat), "data_mode": config.data_mode(),
-            "imagery_source": config.imagery_source() if config.data_live() else "synthetic"}
+            "imagery_source": config.imagery_status()}
 
 
 # ---------------------------------------------------------------------------
