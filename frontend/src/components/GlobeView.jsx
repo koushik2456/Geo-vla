@@ -3,22 +3,17 @@ import {
   Cartographic,
   Color,
   GeoJsonDataSource,
-  ImageryLayer,
-  Ion,
   PolygonHierarchy,
   Rectangle,
   Resource,
-  Terrain,
   UrlTemplateImageryProvider,
-  Viewer,
   Cartesian3,
   sampleTerrainMostDetailed,
 } from "cesium";
-import "cesium/Build/Cesium/Widgets/widgets.css";
 import { absolute, api, authHeader, withShare } from "../api.js";
 import { sortForDrawing } from "../layers.js";
-
-const ION_TOKEN = import.meta.env.VITE_CESIUM_ION_TOKEN;
+import { GlobeControls, GlobeHud, useGlobeHud } from "../globe/GlobeChrome.jsx";
+import { Overlay, clientConfig, createViewer, flyToBbox, google3dAvailable, setBasemap } from "../globe/globeCore.js";
 
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
@@ -53,67 +48,57 @@ async function addWaterSurface(viewer, layer, share) {
 
 export default function GlobeView({ aoi, layers, layerState, share }) {
   const container = useRef(null);
-  const viewerRef = useRef(null);
-  const overlaysRef = useRef({}); // layer id -> ImageryLayer | DataSource | Entity[]
+  const [viewer, setViewer] = useState(null);
+  const [cfg, setCfg] = useState(null);
+  const [basemap, setBasemapState] = useState(null);
+  const overlaysRef = useRef({}); // layer id -> Overlay | DataSource | Entity[]
   const stateRef = useRef(layerState);
   stateRef.current = layerState;
-  const [ready, setReady] = useState(false);
+  const hud = useGlobeHud(viewer);
 
   useEffect(() => {
-    if (ION_TOKEN) Ion.defaultAccessToken = ION_TOKEN;
-    const viewer = new Viewer(container.current, {
-      baseLayer: new ImageryLayer(
-        new UrlTemplateImageryProvider({
-          url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-          credit: "Imagery © Esri",
-          maximumLevel: 19,
-        }),
-      ),
-      terrain: ION_TOKEN ? Terrain.fromWorldTerrain() : undefined,
-      baseLayerPicker: false,
-      geocoder: false,
-      animation: false,
-      timeline: false,
-      homeButton: false,
-      sceneModePicker: false,
-      navigationHelpButton: false,
-      fullscreenButton: false,
-      infoBox: false,
-      selectionIndicator: false,
+    let v;
+    let cancelled = false;
+    clientConfig().then(async (c) => {
+      if (cancelled) return;
+      setCfg(c);
+      v = createViewer(container.current, c);
+      setViewer(v);
+      setBasemapState(await setBasemap(v, "hybrid"));
     });
-    viewerRef.current = viewer;
-    setReady(true);
     return () => {
-      viewer.destroy();
-      viewerRef.current = null;
+      cancelled = true;
+      if (v && !v.isDestroyed()) v.destroy();
       overlaysRef.current = {};
     };
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
-    const viewer = viewerRef.current;
+    if (!viewer) return;
     const rect = Rectangle.fromDegrees(...aoi);
     viewer.entities.removeById("aoi");
-    viewer.entities.add({ id: "aoi", rectangle: { coordinates: rect, fill: false, outline: true, outlineColor: Color.YELLOW, outlineWidth: 2 } });
-    viewer.camera.flyTo({ destination: rect, duration: 1.2 });
-  }, [aoi, ready]);
+    viewer.entities.add({
+      id: "aoi",
+      polyline: {
+        positions: Cartesian3.fromDegreesArray([aoi[0], aoi[1], aoi[2], aoi[1], aoi[2], aoi[3], aoi[0], aoi[3], aoi[0], aoi[1]]),
+        width: 2.5, material: Color.YELLOW, clampToGround: true,
+      },
+    });
+    if (rect) flyToBbox(viewer, aoi, 1.6);
+  }, [aoi, viewer]);
 
   const applyState = (layer, overlay) => {
     const st = stateRef.current[layer.id] ?? { visible: false, opacity: 0.85 };
     if (Array.isArray(overlay)) overlay.forEach((e) => (e.show = st.visible));
-    else {
-      overlay.show = st.visible;
-      if (overlay instanceof ImageryLayer) overlay.alpha = st.opacity;
-    }
+    else if (overlay instanceof Overlay) overlay.set(st.visible, st.opacity);
+    else overlay.show = st.visible;
   };
 
   useEffect(() => {
-    if (!ready) return;
-    const viewer = viewerRef.current;
+    if (!viewer) return undefined;
     let cancelled = false;
     for (const overlay of Object.values(overlaysRef.current)) {
-      if (overlay instanceof ImageryLayer) viewer.imageryLayers.remove(overlay, true);
+      if (overlay instanceof Overlay) overlay.remove();
       else if (Array.isArray(overlay)) overlay.forEach((e) => viewer.entities.remove(e));
       else viewer.dataSources.remove(overlay, true);
     }
@@ -123,13 +108,11 @@ export default function GlobeView({ aoi, layers, layerState, share }) {
       for (const layer of sortForDrawing(layers)) {
         let overlay;
         if (layer.tiles) {
-          overlay = viewer.imageryLayers.addImageryProvider(
-            new UrlTemplateImageryProvider({
-              url: new Resource({ url: absolute(withShare(layer.tiles, share)), headers: authHeader() }),
-              rectangle: Rectangle.fromDegrees(...layer.bbox),
-              maximumLevel: 18,
-            }),
-          );
+          overlay = new Overlay(viewer, new UrlTemplateImageryProvider({
+            url: new Resource({ url: absolute(withShare(layer.tiles, share)), headers: authHeader() }),
+            rectangle: Rectangle.fromDegrees(...layer.bbox),
+            maximumLevel: 18,
+          }));
         } else if (layer.geojson_url) {
           const resource = new Resource({ url: absolute(withShare(layer.geojson_url, share)), headers: authHeader() });
           overlay = await GeoJsonDataSource.load(resource, { stroke: Color.CYAN, strokeWidth: 3, clampToGround: true });
@@ -139,7 +122,7 @@ export default function GlobeView({ aoi, layers, layerState, share }) {
         applyState(layer, overlay);
         overlaysRef.current[layer.id] = overlay;
       }
-      if (!ION_TOKEN) return;
+      if (!cfg?.cesium_ion_token) return;
       for (const layer of layers.filter((l) => l.meta?.water_level_m_asl != null)) {
         try {
           const surface = await addWaterSurface(viewer, { ...layer, geojson_export: layer.downloads.geojson }, share);
@@ -155,7 +138,7 @@ export default function GlobeView({ aoi, layers, layerState, share }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layers, ready, share]);
+  }, [layers, viewer, share]);
 
   useEffect(() => {
     for (const layer of layers) {
@@ -170,7 +153,11 @@ export default function GlobeView({ aoi, layers, layerState, share }) {
   return (
     <div className="map-wrap">
       <div ref={container} className="map" />
-      {!ION_TOKEN && <div className="globe-note">Add a free VITE_CESIUM_ION_TOKEN for 3D terrain and flood water surfaces</div>}
+      <GlobeControls viewer={viewer} cfg={cfg} basemap={basemap} onBasemap={async (id) => setBasemapState(await setBasemap(viewer, id))} camera={hud.camera} />
+      <GlobeHud hud={hud} />
+      {cfg && !google3dAvailable(cfg) && (
+        <div className="globe-note">Add GOOGLE_MAPS_API_KEY (Google 3D) or CESIUM_ION_TOKEN (terrain, flood water) to .env</div>
+      )}
     </div>
   );
 }

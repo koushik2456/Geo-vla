@@ -9,6 +9,9 @@ runs trained vision models and classical geospatial tools in a transparent chain
 returns the result as:
 
 - a map with full-resolution layers, 3D terrain, a before/after swipe and a timelapse,
+- a **Google Earth-style globe** (Google Photorealistic 3D Tiles), where you can click
+  any point for its exact address and elevation and see what the neural network
+  predicts there,
 - a dashboard of key figures and charts,
 - an official PDF report with a GeoTIFF/GeoJSON export for GIS software,
 - a step-by-step trace of how every number was produced.
@@ -122,13 +125,56 @@ and how many km of road are affected?"*
     sets the spacing.
 
   The textures are also served individually (`/runs/{id}/terrain/{kind}.png`).
-- **Globe** (Cesium). With a free Cesium ion token, flood layers become a 3D water
+- **Globe** (Cesium) with the same controls as the [Globe Explorer](#globe-explorer): Google
+  Photorealistic 3D, satellite + labels, streets or dark basemaps. Result layers drape on
+  the globe and on the 3D tiles. With a free Cesium ion token, flood layers become a 3D water
   surface. Its height is calibrated against the terrain along the flood boundary, which
   removes the geoid/ellipsoid offset between the Copernicus DEM and Cesium terrain.
 - **Before/after swipe** between any two layers (e.g. the two dates of a deforestation run).
 - **Timelapse player** for time-series workflows (imagery, NDVI or land cover per date).
 - **Place search:** OpenStreetMap Nominatim, plus a bundled offline list of Indian
   cities, lakes, forests and flood- or landslide-prone areas.
+
+## Globe Explorer
+
+A full-screen globe (`#/explore`, no sign-in needed) for flying anywhere and asking two
+questions about a point: *where exactly is this?* and *what does the neural network see
+here?*
+
+**The globe**
+- **Google Photorealistic 3D Tiles** (with `GOOGLE_MAPS_API_KEY`, or via a Cesium ion
+  token): textured 3D cities, terrain and landmarks, the same data as Google Earth.
+  Without a key: Esri World Imagery with places, borders and roads, or OSM / dark maps.
+- Starts from space with the Earth slowly turning. Search a place and the camera flies
+  in at a Google Earth-style oblique angle.
+- Controls: compass (click to reset north), zoom, 2D/3D tilt toggle, whole-Earth
+  view and *my location*. Mouse: drag to pan, scroll to zoom, Ctrl/middle-drag to
+  tilt and rotate.
+- A live HUD shows cursor coordinates (DMS and decimal), ground height under the cursor,
+  eye altitude, heading and tilt.
+
+**Place details** (click anywhere)
+- Address from the **Google Geocoding API** (street, suburb, city, district, state,
+  postcode, plus code), falling back to OpenStreetMap Nominatim, then the offline
+  gazetteer.
+- Coordinates in decimal and DMS, the UTM zone and EPSG code, and elevation from the
+  Copernicus DEM with the local min–max.
+- *Open in Google Maps* / *Open in Google Earth* at the same spot, and *Analyze this
+  area*, which starts a workflow there.
+
+**Click-to-classify (the neural network)**
+- Fetches Sentinel-2 around the point (Copernicus, Earth Engine or demo data) and cuts
+  the 3×3 neighbourhood of 640 m EuroSAT-sized patches. The active ResNet-50
+  classifies each patch, and the patches are drawn on the globe in their class colours.
+- For the centre patch it shows the softmax probabilities (top 5), prediction
+  entropy, the exact patch fed to the network, a **Grad-CAM** heatmap of where the
+  network looked, the most active feature maps at every stage (stem → layer4, with
+  tensor shapes and sparsity), the raw logits, and the 2048-d embedding.
+- It also shows the patch's **spectral signature** (B02/B03/B04/B08 reflectance) with
+  NDVI and NDWI, so you can explain a prediction from the physics as well as from
+  the network.
+- Every explored patch stays on the globe and in a history list. Clicking around a city
+  builds up a hand-made land-cover map.
 
 ## Reports and exports
 
@@ -216,7 +262,14 @@ models. Upload the `.pth` in the studio (or copy `models/registry/` across).
    when only a few percent of pixels change.
 5. Promote the model and run *Urban growth*: the method line now names the new version.
 
+6. Open the **Globe Explorer** and click a lake, a forest and a city block: the
+   softmax changes, and Grad-CAM shows which pixels drove each decision. Compare the
+   feature maps from stem to layer4 (edges and colours → textures → object parts).
+
 **Remote sensing class**: focus on the full system.
+0. Start in the **Globe Explorer** on Google 3D: fly from space to the study area,
+   click points to show coordinates, UTM zone, elevation and the spectral signature
+   (vegetation's red edge: low red, high NIR, NDVI > 0.6; water: NDWI > 0).
 1. Pick a place (e.g. Bellandur Lake or Wayanad) and run **Deforestation** or
    **Lake & river encroachment**. Walk through the trace: Sentinel-2 L2A mosaic → NDVI →
    land-cover map → masks → overlay → zonal statistics.
@@ -237,10 +290,38 @@ Copy `.env.example` to `.env`:
 | Component | Variable(s) | Without it |
 |---|---|---|
 | AI planner for free-text questions | `GROQ_API_KEY` (free) or another provider, see [AI agent](#ai-agent-free-open-models) | Rule-based planner (workflows are unaffected) |
-| Sentinel-2, DEM, OSM (switch together) | `COPERNICUS_CLIENT_ID`, `COPERNICUS_CLIENT_SECRET` (free at [dataspace.copernicus.eu](https://dataspace.copernicus.eu) → *User settings → OAuth clients*) | Synthetic demo world, labelled "demo data" everywhere including the PDF |
+| Sentinel-2, DEM, OSM (switch together) | `COPERNICUS_CLIENT_ID`, `COPERNICUS_CLIENT_SECRET` (free at [dataspace.copernicus.eu](https://dataspace.copernicus.eu) → *User settings → OAuth clients*) **or** Google Earth Engine (`EE_PROJECT`, see below) | Synthetic demo world, labelled "demo data" everywhere including the PDF |
+| Google Photorealistic 3D globe + Google geocoding | `GOOGLE_MAPS_API_KEY` (Map Tiles API + Geocoding API; Google gives a monthly free allowance) | Esri satellite + labels globe, OSM Nominatim addresses |
 | First admin | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | No admin until set |
-| Globe terrain + 3D water | `VITE_CESIUM_ION_TOKEN` in `frontend/.env` (free) | Smooth globe (MapLibre 3D terrain needs no token) |
+| Globe terrain + 3D water (and Google 3D via ion) | `CESIUM_ION_TOKEN` (free at [ion.cesium.com](https://ion.cesium.com)) | Smooth globe (MapLibre 3D terrain needs no token) |
 | Alert email / webhook | `SMTP_*`, `ALERT_WEBHOOK_URL` | In-app alerts only |
+
+### Google Earth Engine
+
+Earth Engine can replace (or back up) the Copernicus API as the Sentinel-2 source. It
+builds a **cloud-masked median composite** server-side (`COPERNICUS/S2_SR_HARMONIZED`,
+with SCL classes cloud, shadow and cirrus removed) and returns exactly the analysis grid
+through `computePixels`. Copernicus DEM GLO-30 from Earth Engine is used when the AWS
+DEM tiles are unreachable.
+
+```bash
+pip install earthengine-api            # already in requirements.txt
+earthengine authenticate               # once, opens a browser (personal account)
+# .env
+EE_PROJECT=your-cloud-project-id       # registered at code.earthengine.google.com/register
+IMAGERY_SOURCE=earthengine             # or auto: Copernicus first when both are set
+```
+
+For servers, use a service account instead: `EE_SERVICE_ACCOUNT=name@project.iam.gserviceaccount.com`
+and `EE_PRIVATE_KEY_FILE=/path/key.json`. The analysis trace names the source
+and the number of scenes composited.
+
+### Google Maps key
+
+In the Google Cloud console, enable the **Map Tiles API** (for 3D tiles) and the
+**Geocoding API**, create a key and put it in `GOOGLE_MAPS_API_KEY`. The browser needs
+the key, so restrict it by HTTP referrer (your site) and to the Map Tiles API. If you do,
+give the server its own key for geocoding in `GOOGLE_GEOCODING_KEY`.
 
 ## Architecture
 
@@ -303,6 +384,7 @@ Interactive docs at `/docs`. The main endpoints:
 | Projects | `GET/POST /projects`, `PATCH/DELETE /projects/{id}` |
 | Catalogue | `GET /workflows`, `GET /geocode?q=`, `GET /tools`, `GET /health` |
 | Monitoring | `GET/POST /monitors`, `PATCH/DELETE /monitors/{id}`, `POST /monitors/{id}/check`, `GET /alerts`, `POST /alerts/read` |
+| Explorer | `GET /client-config` (browser map keys), `GET /explore/point?lon=&lat=` (address, elevation, UTM), `POST /explore/classify` (`{lon, lat, date}` → 3×3 predictions, Grad-CAM, feature maps, spectral signature) |
 | 3D | `GET /runs/{id}/terrain` (heights, contours, stats), `GET /runs/{id}/terrain/{hypsometric,hillshade,normal,ao}.png` |
 | Training | `GET /training/datasets`, `POST /training/datasets/{d}/download`, `GET /training/datasets/{d}/explore`, `…/samples.png`, `GET/POST /training/jobs`, `GET /training/jobs/{id}`, `GET /training/jobs/{id}/artifacts/{name}`, `POST …/cancel`, `GET /models`, `GET /models/{m}/versions/{v}/artifacts/{name}`, `POST /models/{m}/versions/{v}/promote`, `POST /models/{m}/deactivate`, `POST /models/{m}/upload`, `DELETE /models/{m}/versions/{v}` |
 | Scripts | `POST /query` (synchronous agent run with inline previews; used by the evaluation) |
@@ -361,15 +443,16 @@ agent.py planner.py     LLM tool-calling loop (OpenAI-compatible / Anthropic) ·
 geotools.py             Workspace, tool registry, 15 tools, layer styling
 rendering.py            Colour styles shared by tiles, previews and reports
 config.py geo_utils.py synthetic.py
-api/                    auth · runs/tiles/exports/projects · workflows/monitoring · training
+api/                    auth · runs/tiles/exports/projects · workflows/monitoring · training · explore
 services/               db · auth · runs · storage · tiles · workflows · insights ·
-                        exports · reports (PDF) · geocode · monitoring · training · terrain (3D)
+                        exports · reports (PDF) · geocode (Google/OSM) · monitoring · training ·
+                        terrain (3D) · explorer (click-to-classify) · earthengine
 models/                 ResNet-50 classifier · Siamese U-Net change detector
 training/               pipeline · dataset download/stats · training scripts · analytics · Colab notebook
 scripts/                setup.sh · setup.ps1 (one-command setup)
 eval/                   benchmark + harness
-frontend/               React + Vite + MapLibre GL + Cesium + Three.js
-tests/                  56 tests: tools, agent, API, platform, every workflow, real training job
+frontend/               React + Vite + MapLibre GL + Cesium (src/globe: shared globe core) + Three.js
+tests/                  65 tests: tools, agent, API, platform, every workflow, real training job
 data/gazetteer.json     offline place list
 ```
 

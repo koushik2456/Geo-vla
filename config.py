@@ -5,7 +5,7 @@ Geo-VLA degrades gracefully so the full pipeline can be demoed with no
 credentials and no trained checkpoints:
 
   * No LLM key (Groq, OpenRouter, Together, Ollama, Anthropic, …) -> offline rule-based planner
-  * No COPERNICUS_CLIENT_ID/SECRET -> synthetic Sentinel-2, DEM and OSM data
+  * No COPERNICUS_CLIENT_ID/SECRET or EE_PROJECT -> synthetic Sentinel-2, DEM and OSM data
   * No .pth checkpoints          -> classical fallbacks (spectral rules, CVA)
 
 Every fallback is labelled in the tool output, so the reasoning trace always
@@ -97,6 +97,40 @@ def llm_enabled() -> bool:
     return llm_settings() is not None
 
 
+# Google Earth Engine (optional imagery source). Authenticate once with
+# `earthengine authenticate` (personal account) or set a service account + JSON key.
+EE_PROJECT = os.getenv("EE_PROJECT", "").strip()
+EE_SERVICE_ACCOUNT = os.getenv("EE_SERVICE_ACCOUNT", "").strip()
+EE_PRIVATE_KEY_FILE = os.getenv("EE_PRIVATE_KEY_FILE", "").strip()
+# IMAGERY_SOURCE: auto | copernicus | earthengine ("auto" prefers Copernicus when both are set)
+_IMAGERY_SOURCE = os.getenv("IMAGERY_SOURCE", "auto").strip().lower()
+
+# Google Maps Platform (optional): Photorealistic 3D Tiles on the globe (browser,
+# Map Tiles API) and accurate geocoding / reverse geocoding (server, Geocoding API).
+# GOOGLE_GEOCODING_KEY defaults to the same key; use a separate unrestricted-by-referrer
+# key there if the browser key is restricted to your domain.
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+GOOGLE_GEOCODING_KEY = os.getenv("GOOGLE_GEOCODING_KEY", "").strip() or GOOGLE_MAPS_API_KEY
+CESIUM_ION_TOKEN = os.getenv("CESIUM_ION_TOKEN", "").strip()
+
+
+def copernicus_configured() -> bool:
+    return bool(COPERNICUS_CLIENT_ID and COPERNICUS_CLIENT_SECRET)
+
+
+def earthengine_configured() -> bool:
+    return bool(EE_PROJECT)
+
+
+def imagery_source() -> str:
+    """Where live Sentinel-2 comes from: "copernicus" or "earthengine"."""
+    if _IMAGERY_SOURCE == "earthengine" and earthengine_configured():
+        return "earthengine"
+    if _IMAGERY_SOURCE == "copernicus" or copernicus_configured():
+        return "copernicus"
+    return "earthengine" if earthengine_configured() else "copernicus"
+
+
 # Data mode: "live" (Sentinel-2 + Copernicus DEM + OpenStreetMap over the network)
 # or "synthetic" (deterministic offline world from synthetic.py). All three
 # sources switch together so layers from different tools stay spatially consistent.
@@ -109,7 +143,7 @@ def data_mode() -> str:
         return "synthetic"
     if _DATA_MODE in {"live", "synthetic"}:
         return _DATA_MODE
-    return "live" if (COPERNICUS_CLIENT_ID and COPERNICUS_CLIENT_SECRET) else "synthetic"
+    return "live" if (copernicus_configured() or earthengine_configured()) else "synthetic"
 
 
 def data_live() -> bool:
@@ -147,3 +181,5 @@ ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "")
 
 # Place search (OpenStreetMap Nominatim; bundled gazetteer when offline).
 NOMINATIM_URL = os.getenv("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")
+NOMINATIM_REVERSE_URL = os.getenv("NOMINATIM_REVERSE_URL", "https://nominatim.openstreetmap.org/reverse")
+GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"

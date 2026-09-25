@@ -1,0 +1,110 @@
+import React, { useEffect, useState } from "react";
+import { ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium";
+import {
+  BASEMAPS,
+  cameraState,
+  flyHome,
+  flyToPoint,
+  fmtDistance,
+  fmtLatLon,
+  google3dAvailable,
+  pickCartographic,
+  resetNorth,
+  toggleTilt,
+  zoom,
+} from "./globeCore.js";
+
+/** Live cursor position + camera state for the HUD. */
+export function useGlobeHud(viewer) {
+  const [cursor, setCursor] = useState(null);
+  const [camera, setCamera] = useState(null);
+  useEffect(() => {
+    if (!viewer) return undefined;
+    let frame = 0;
+    let last = null;
+    const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction((move) => {
+      last = move.endPosition;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!viewer.isDestroyed()) setCursor(pickCartographic(viewer, last));
+      });
+    }, ScreenSpaceEventType.MOUSE_MOVE);
+    const onCamera = () => setCamera(cameraState(viewer));
+    viewer.camera.percentageChanged = 0.002;
+    const remove = viewer.camera.changed.addEventListener(onCamera);
+    const removeEnd = viewer.camera.moveEnd.addEventListener(onCamera);
+    onCamera();
+    return () => {
+      cancelAnimationFrame(frame);
+      handler.destroy();
+      remove();
+      removeEnd();
+    };
+  }, [viewer]);
+  return { cursor, camera };
+}
+
+export function GlobeHud({ hud, extra }) {
+  const { cursor, camera } = hud;
+  return (
+    <div className="globe-hud" aria-live="off">
+      <span title="Cursor position">
+        <b>⌖</b> {cursor ? `${fmtLatLon(cursor.lat, cursor.lon)} · ${cursor.lat.toFixed(5)}, ${cursor.lon.toFixed(5)}` : "move over the globe"}
+      </span>
+      {cursor?.height != null && <span title="Ground elevation under the cursor">⛰ {fmtDistance(cursor.height)}</span>}
+      {camera && <span title="Eye altitude">👁 {fmtDistance(camera.altitude)}</span>}
+      {camera && <span title="Heading / tilt">{Math.round((camera.heading + 360) % 360)}° · tilt {Math.round(90 + camera.pitch)}°</span>}
+      {extra}
+    </div>
+  );
+}
+
+export function GlobeControls({ viewer, cfg, basemap, onBasemap, camera }) {
+  const [open, setOpen] = useState(false);
+  const heading = camera?.heading ?? 0;
+  const locate = () =>
+    navigator.geolocation?.getCurrentPosition(
+      (p) => flyToPoint(viewer, p.coords.longitude, p.coords.latitude, { range: 2500 }),
+      () => alert("Location permission denied"),
+    );
+  if (!viewer) return null;
+  return (
+    <>
+      <div className="globe-controls" role="toolbar" aria-label="Globe navigation">
+        <button className="compass" title="Reset north" aria-label="Reset north" onClick={() => resetNorth(viewer)}>
+          <span style={{ transform: `rotate(${-heading}deg)` }}>
+            <i className="n">▲</i>
+            <i className="s">▼</i>
+          </span>
+        </button>
+        <button title="Zoom in" aria-label="Zoom in" onClick={() => zoom(viewer, 0.45)}>＋</button>
+        <button title="Zoom out" aria-label="Zoom out" onClick={() => zoom(viewer, -0.8)}>－</button>
+        <button title="Tilt: 2D / 3D view" aria-label="Toggle tilt" onClick={() => toggleTilt(viewer)}>3D</button>
+        <button title="Whole Earth" aria-label="Whole Earth" onClick={() => flyHome(viewer)}>🌐</button>
+        <button title="My location" aria-label="My location" onClick={locate}>◎</button>
+      </div>
+      <div className="basemap-switch">
+        <button className="basemap-current" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          ▦ {BASEMAPS.find((b) => b.id === basemap)?.label ?? "Map"}
+        </button>
+        {open && (
+          <div className="basemap-menu" onMouseLeave={() => setOpen(false)}>
+            {BASEMAPS.map((b) => {
+              const disabled = b.id === "google3d" && !google3dAvailable(cfg);
+              return (
+                <button key={b.id} className={b.id === basemap ? "active" : ""} disabled={disabled}
+                  title={disabled ? "Add GOOGLE_MAPS_API_KEY (or CESIUM_ION_TOKEN) to .env" : b.hint}
+                  onClick={() => { setOpen(false); onBasemap(b.id); }}>
+                  <strong>{b.label}</strong>
+                  <span>{disabled ? "needs a Google Maps key" : b.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}

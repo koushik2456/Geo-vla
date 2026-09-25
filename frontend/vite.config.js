@@ -29,6 +29,11 @@ export default defineConfig({
   ],
   build: { chunkSizeWarningLimit: 5000 }, // Cesium is large by nature and lazy-loaded
   server: {
-    proxy: { "/query": backend, "/health": backend, "/tools": backend },
+    // Every backend route prefix, so `npm run dev` works against a local API.
+    proxy: Object.fromEntries(
+      ["/auth", "/admin", "/runs", "/share", "/projects", "/workflows", "/geocode", "/monitors", "/alerts",
+        "/training", "/models", "/explore", "/client-config", "/query", "/health", "/tools", "/docs", "/openapi.json"]
+        .map((prefix) => [prefix, backend]),
+    ),
   },
 });

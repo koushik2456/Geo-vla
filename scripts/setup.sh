@@ -17,7 +17,8 @@ python -m training.download_data eurosat || echo "EuroSAT download failed — th
 cat <<'MSG'
 
 Setup complete.
-  1. Edit .env: set ADMIN_PASSWORD (and GROQ_API_KEY for the AI agent, COPERNICUS_* for real imagery)
+  1. Edit .env: set ADMIN_PASSWORD (and GROQ_API_KEY for the AI agent, COPERNICUS_* or EE_PROJECT for real
+     imagery, GOOGLE_MAPS_API_KEY for the Google 3D globe)
   2. Train:   source .venv/bin/activate && python -m training.pipeline          (quick demo)
               python -m training.pipeline --real                              (EuroSAT; GPU recommended)
   3. Run:     uvicorn main:app --port 8000   →  http://localhost:8000

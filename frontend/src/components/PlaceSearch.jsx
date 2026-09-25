@@ -8,10 +8,11 @@ export default function PlaceSearch({ onSelect }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const timer = useRef(null);
+  const chosen = useRef(null);
 
   useEffect(() => {
     clearTimeout(timer.current);
-    if (q.trim().length < 2) {
+    if (q.trim().length < 2 || q === chosen.current) {
       setResults([]);
       return;
     }
@@ -31,6 +32,7 @@ export default function PlaceSearch({ onSelect }) {
 
   const choose = (r) => {
     onSelect(r);
+    chosen.current = r.name;
     setQ(r.name);
     setOpen(false);
   };

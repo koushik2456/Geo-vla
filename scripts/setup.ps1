@@ -14,7 +14,7 @@ Push-Location frontend; npm install; npm run build; Pop-Location
 try { python -m training.download_data eurosat } catch { Write-Host "EuroSAT download failed - retry from the studio or use synthetic data" }
 Write-Host ""
 Write-Host "Setup complete."
-Write-Host "  1. Edit .env: set ADMIN_PASSWORD (and GROQ_API_KEY for the AI agent)"
+Write-Host "  1. Edit .env: set ADMIN_PASSWORD (and GROQ_API_KEY for the AI agent, EE_PROJECT or COPERNICUS_* for imagery, GOOGLE_MAPS_API_KEY for the Google 3D globe)"
 Write-Host "  2. Train:  .\.venv\Scripts\Activate.ps1; python -m training.pipeline        (quick demo)"
 Write-Host "             python -m training.pipeline --real                               (EuroSAT)"
 Write-Host "  3. Run:    uvicorn main:app --port 8000   ->  http://localhost:8000"

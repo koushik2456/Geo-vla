@@ -257,6 +257,24 @@ def fetch_sentinel2_bands(bbox, date: str, window_days: int, max_cloud_pct: int,
     return bands
 
 
+def fetch_sentinel2_bands_ee(bbox, date: str, window_days: int, max_cloud_pct: int, shape) -> tuple:
+    """Sentinel-2 composite from Google Earth Engine (cached like the Copernicus path)."""
+    from services import earthengine
+
+    path = _cache_path(config.IMAGERY_CACHE_DIR, "s2-ee", bbox, date, window_days, max_cloud_pct, shape)
+    if os.path.exists(path):
+        with np.load(path) as cached:
+            bands = {k: cached[k] for k in cached.files}
+        return bands, int(bands.pop("_scenes", np.array(0)))
+    try:
+        bands = earthengine.sentinel2_bands(bbox, date, window_days, max_cloud_pct, shape)
+    except earthengine.EarthEngineError as exc:
+        raise ToolError(str(exc)) from exc
+    scenes = bands.pop("_scenes")
+    np.savez_compressed(path, _scenes=np.array(scenes), **bands)
+    return bands, scenes
+
+
 def _bands_to_rgb(bands: dict) -> np.ndarray:
     rgb = np.stack([bands["B04"], bands["B03"], bands["B02"]], axis=-1) * 2.5 * 255
     return np.clip(rgb, 0, 255).astype(np.uint8)
@@ -278,7 +296,10 @@ def _bands_to_rgb(bands: dict) -> np.ndarray:
 def fetch_sentinel2_scene(ws: Workspace, date: str, bbox=None, window_days: int = 20, max_cloud_pct: int = 30) -> dict:
     bbox = ws.bbox(bbox)
     shape = grid_shape(bbox, S2_RESOLUTION_M)
-    if config.data_live():
+    if config.data_live() and config.imagery_source() == "earthengine":
+        bands, scenes = fetch_sentinel2_bands_ee(bbox, date, window_days, max_cloud_pct, shape)
+        source = f"Google Earth Engine — Sentinel-2 L2A (cloud-masked median of {scenes} scenes)"
+    elif config.data_live():
         bands = fetch_sentinel2_bands(bbox, date, window_days, max_cloud_pct, shape)
         source = "Copernicus Data Space — Sentinel-2 L2A (least-cloud mosaic)"
     else:
@@ -364,8 +385,19 @@ def _fill_dem_gaps(dem: np.ndarray, seam_px: int = 3) -> np.ndarray:
 def fetch_dem(ws: Workspace, bbox=None) -> dict:
     bbox = ws.bbox(bbox)
     if config.data_live():
-        dem = fetch_dem_array(bbox)
-        source = "Copernicus DEM GLO-30 (AWS open data COGs)"
+        try:
+            dem = fetch_dem_array(bbox)
+            source = "Copernicus DEM GLO-30 (AWS open data COGs)"
+        except Exception as exc:
+            if not config.earthengine_configured():
+                raise
+            from services import earthengine
+            log.info("AWS DEM unavailable (%s); using Earth Engine", exc)
+            try:
+                dem = earthengine.dem(bbox, grid_shape(bbox, DEM_RESOLUTION_M, max_px=1024))
+            except earthengine.EarthEngineError as ee_exc:
+                raise ToolError(str(ee_exc)) from ee_exc
+            source = "Copernicus DEM GLO-30 (Google Earth Engine)"
     else:
         dem = synthetic.synthetic_dem(bbox, grid_shape(bbox, DEM_RESOLUTION_M, max_px=512))
         source = "synthetic (offline demo)"
@@ -528,14 +560,23 @@ def _checkpoint(name: str):
     return path if os.path.exists(path) else None
 
 
-def model_version(key: str):
-    """Version label of the active checkpoint (written by the model registry on promotion)."""
+def _sidecar(key: str) -> dict:
     ckpt = _checkpoint(CHECKPOINT_FILES[key])
     sidecar = ckpt and ckpt + ".version.json"
     if sidecar and os.path.exists(sidecar):
         with open(sidecar) as f:
-            return json.load(f).get("version")
-    return "unversioned" if ckpt else None
+            return json.load(f)
+    return {}
+
+
+def model_version(key: str):
+    """Version label of the active checkpoint (written by the model registry on promotion)."""
+    return _sidecar(key).get("version") or ("unversioned" if _checkpoint(CHECKPOINT_FILES[key]) else None)
+
+
+def classifier_input_size() -> int:
+    """Side length the active classifier was trained at (224 unless the registry recorded otherwise)."""
+    return int(_sidecar("classifier").get("input_size") or 224)
 
 
 def reload_models() -> None:
@@ -594,7 +635,8 @@ def _classify_cnn(model, device, rgb: np.ndarray, patch: int = 64) -> np.ndarray
     with torch.no_grad():
         for i in range(0, len(tiles), 64):
             batch = torch.from_numpy(np.stack([_normalize(t) for t in tiles[i:i + 64]])).to(device)
-            batch = F.interpolate(batch, size=(224, 224), mode="bilinear", align_corners=False)
+            size = classifier_input_size()
+            batch = F.interpolate(batch, size=(size, size), mode="bilinear", align_corners=False)
             labels.append(model(batch).argmax(1).cpu().numpy())
     grid = np.concatenate(labels).reshape(pr, pc)
     return np.kron(grid, np.ones((patch, patch), dtype=np.int64))[:rows, :cols].astype(np.int8)

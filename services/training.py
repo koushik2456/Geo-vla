@@ -419,8 +419,15 @@ def promote(model: str, version: str) -> dict:
     tmp = target + ".tmp"
     shutil.copyfile(row["path"], tmp)
     os.replace(tmp, target)  # atomic swap: in-flight runs keep the model they already loaded
+    sidecar = {"model": model, "version": version, "promoted_at": db.now()}
+    arch = os.path.join(os.path.dirname(row["path"]), f"{version}_analytics", "architecture.json")
+    if os.path.exists(arch):  # remember the training input size so inference resizes patches the same way
+        with open(arch) as f:
+            shapes = json.load(f).get("input_shape") or [[]]
+        if len(shapes[0]) == 4:
+            sidecar["input_size"] = shapes[0][-1]
     with open(target + ".version.json", "w") as f:
-        json.dump({"model": model, "version": version, "promoted_at": db.now()}, f)
+        json.dump(sidecar, f)
     db.execute("UPDATE model_versions SET active = (version = ?) WHERE model = ?", (version, model))
     geotools.reload_models()
     return row

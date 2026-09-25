@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { AuthProvider, useAuth } from "./auth.jsx";
 import { navigate, useRoute } from "./router.js";
@@ -8,6 +8,9 @@ import LoginPage from "./pages/LoginPage.jsx";
 import MonitoringPage from "./pages/MonitoringPage.jsx";
 import ProjectsPage from "./pages/ProjectsPage.jsx";
 import StudioPage from "./pages/StudioPage.jsx";
+
+// Cesium is large: the globe explorer is loaded on first visit.
+const ExplorePage = lazy(() => import("./pages/ExplorePage.jsx"));
 
 const DEFAULT_AOI = [77.5, 12.9, 77.56, 12.96]; // Bengaluru outskirts, ~6.5 km square
 
@@ -39,6 +42,7 @@ function Shell() {
   const [page, arg] = route;
   const links = [
     ["", "Analyze", true],
+    ["explore", "Globe Explorer", true],
     ["projects", "Projects", !!user],
     ["monitoring", "Monitoring", can("official")],
     ["studio", "Training studio", can("admin")],
@@ -49,6 +53,11 @@ function Shell() {
 
   let body;
   if (page === "login") body = <LoginPage />;
+  else if (page === "explore") body = (
+    <Suspense fallback={<div className="map-loading">Loading the globe…</div>}>
+      <ExplorePage setAoi={setAoi} setPlace={setPlace} />
+    </Suspense>
+  );
   else if (page === "projects") body = guard("public", <ProjectsPage />);
   else if (page === "monitoring") body = guard("official", <MonitoringPage catalog={catalog} aoi={aoi} place={place} onAlertsChanged={refreshAlerts} />);
   else if (page === "studio") body = guard("admin", <StudioPage />);

@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 
 import geotools
 from agent import GeoVLAAgent
-from api import auth_api, monitoring_api, runs_api, training_api
+from api import auth_api, explore_api, monitoring_api, runs_api, training_api
 from geo_utils import validate_bbox
 from services import auth, db, monitoring, runs, training
 
@@ -58,7 +58,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-for router in (auth_api.router, runs_api.router, monitoring_api.router, training_api.router):
+for router in (auth_api.router, runs_api.router, monitoring_api.router, training_api.router, explore_api.router):
     app.include_router(router)
 
 
@@ -110,6 +110,7 @@ def health():
         "provider": (config.llm_settings() or {}).get("provider"),
         "model": (config.llm_settings() or {}).get("model"),
         "data_mode": config.data_mode(),
+        "imagery_source": config.imagery_source() if config.data_live() else "synthetic",
         "checkpoints": {
             "classifier": geotools.model_version("classifier"),
             "change_detector": geotools.model_version("change"),
